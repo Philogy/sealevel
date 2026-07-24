@@ -1,2 +1,4 @@
 .env
 /target/
+/liquidity_book.json
+/liquidity_book.json.tmp
