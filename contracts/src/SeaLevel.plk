@@ -1,0 +1,13 @@
+import std::constructor::return_runtime;
+
+init {
+
+    let final_runtime_len = @runtime_length() + 32;
+    let buf = @malloc_uninit(final_runtime_len);
+    @evm_codecopy(buf, @runtime_start_offset(), @runtime_length());
+    @evm_return(buf, final_runtime_len);
+}
+
+run {
+    @evm_stop();
+}
