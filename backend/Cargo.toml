@@ -6,3 +6,6 @@ rust-version = "1.85"
 
 [dependencies]
 alloy-primitives = "1.6.1"
+anyhow = "1"
+dotenvy = "0.15"
+url = "2"
