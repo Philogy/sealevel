@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::ClientBuilder;
-use alloy_rpc_types_eth::Filter;
+use alloy_rpc_types_eth::{Filter, Log};
 use alloy_sol_types::{SolEvent, sol};
 use alloy_transport_ws::WsConnect;
 use anyhow::{Context, Result, anyhow, bail};
@@ -170,14 +170,142 @@ impl Backend {
                     Pulled::SIGNATURE_HASH,
                     Pushed::SIGNATURE_HASH,
                 ]);
-            self.http_provider
+            let logs = self
+                .http_provider
                 .get_logs(&filter)
                 .await
                 .context("failed to get AquaRouter logs")?;
 
+            for log in logs {
+                self.process_log(log)?;
+            }
+
             self.liquidity_book.last_processed_block =
                 current_block.min(self.liquidity_book.last_processed_block + BLOCK_RANGE_SIZE);
+            if let Err(error) = self.liquidity_book.backup() {
+                eprintln!("failed to back up liquidity book: {error:#}");
+            }
         }
+    }
+
+    fn process_log(&mut self, log: Log) -> Result<()> {
+        let Some(topic) = log.topic0() else {
+            return Ok(());
+        };
+
+        match *topic {
+            Shipped::SIGNATURE_HASH => {
+                let event = log
+                    .log_decode_validate::<Shipped>()
+                    .context("failed to decode Shipped event")?
+                    .inner
+                    .data;
+                if event.app != self.stable_amm_app_address {
+                    return Ok(());
+                }
+
+                let maker = self
+                    .liquidity_book
+                    .makers
+                    .entry(event.maker)
+                    .or_insert_with(|| Maker {
+                        accepted_strategies: HashMap::new(),
+                        tokens: HashMap::new(),
+                    });
+                maker
+                    .accepted_strategies
+                    .insert(event.strategyHash, event.strategy);
+            }
+            Docked::SIGNATURE_HASH => {
+                let event = log
+                    .log_decode_validate::<Docked>()
+                    .context("failed to decode Docked event")?
+                    .inner
+                    .data;
+                if event.app != self.stable_amm_app_address {
+                    return Ok(());
+                }
+
+                let Some(maker) = self.liquidity_book.makers.get_mut(&event.maker) else {
+                    return Ok(());
+                };
+                if maker
+                    .accepted_strategies
+                    .remove(&event.strategyHash)
+                    .is_none()
+                {
+                    return Ok(());
+                }
+
+                let tokens = std::mem::take(&mut maker.tokens);
+                for (token, mut strategies) in tokens {
+                    strategies.remove(&event.strategyHash);
+
+                    if !strategies.is_empty() {
+                        maker.tokens.insert(token, strategies);
+                    }
+                }
+
+                if self
+                    .liquidity_book
+                    .makers
+                    .get(&event.maker)
+                    .is_some_and(|maker| {
+                        maker.accepted_strategies.is_empty() && maker.tokens.is_empty()
+                    })
+                {
+                    self.liquidity_book.makers.remove(&event.maker);
+                }
+            }
+            Pulled::SIGNATURE_HASH => {
+                let event = log
+                    .log_decode_validate::<Pulled>()
+                    .context("failed to decode Pulled event")?
+                    .inner
+                    .data;
+                if event.app != self.stable_amm_app_address {
+                    return Ok(());
+                }
+
+                let maker = self
+                    .liquidity_book
+                    .makers
+                    .get_mut(&event.maker)
+                    .context("Pulled event references an unknown maker")?;
+                let balance = maker
+                    .tokens
+                    .get_mut(&event.token)
+                    .and_then(|balances| balances.get_mut(&event.strategyHash))
+                    .context("Pulled event references an unknown token balance")?;
+                *balance -= event.amount;
+            }
+            Pushed::SIGNATURE_HASH => {
+                let event = log
+                    .log_decode_validate::<Pushed>()
+                    .context("failed to decode Pushed event")?
+                    .inner
+                    .data;
+                if event.app != self.stable_amm_app_address {
+                    return Ok(());
+                }
+
+                let maker = self
+                    .liquidity_book
+                    .makers
+                    .get_mut(&event.maker)
+                    .context("Pushed event references an unknown maker")?;
+                let balance = maker
+                    .tokens
+                    .entry(event.token)
+                    .or_default()
+                    .entry(event.strategyHash)
+                    .or_default();
+                *balance += event.amount;
+            }
+            _ => return Ok(()),
+        }
+
+        Ok(())
     }
 }
 
