@@ -6,9 +6,12 @@ rust-version = "1.85"
 
 [dependencies]
 alloy-primitives = { version = "1.6.1", features = ["serde"] }
-alloy-provider = { version = "1.6.1", features = ["reqwest"] }
+alloy-provider = { version = "1.6.1", features = ["reqwest", "ws"] }
+alloy-rpc-client = { version = "1.8.3", features = ["ws"] }
+alloy-transport-ws = "1.8.3"
 anyhow = "1"
 dotenvy = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 url = "2"

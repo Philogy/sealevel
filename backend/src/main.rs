@@ -1,9 +1,12 @@
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_provider::RootProvider;
-use anyhow::{Context, Result};
+use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_client::ClientBuilder;
+use alloy_transport_ws::WsConnect;
+use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::ErrorKind;
+use tokio::sync::watch;
 use url::Url;
 
 const LIQUIDITY_BOOK_PATH: &str = "liquidity_book.json";
@@ -84,14 +87,25 @@ impl LiquidityBook {
 }
 
 pub struct Backend {
-    pub provider: RootProvider,
+    pub http_provider: RootProvider,
+    pub head_receiver: watch::Receiver<u64>,
     pub aqua_router_address: Address,
     pub stable_amm_app_address: Address,
     pub liquidity_book: LiquidityBook,
 }
 
 impl Backend {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config) -> Result<Self> {
+        let mut ws_url = config.rpc_url.clone();
+        let scheme = match ws_url.scheme() {
+            "http" => "ws",
+            "https" => "wss",
+            _ => bail!("RPC_URL must use http or https to derive a WebSocket URL"),
+        };
+        ws_url
+            .set_scheme(scheme)
+            .map_err(|_| anyhow!("failed to derive WebSocket URL from RPC_URL"))?;
+        let http_provider = RootProvider::new_http(config.rpc_url);
         let liquidity_book = match LiquidityBook::load() {
             Ok(Some(liquidity_book)) => liquidity_book,
             Ok(None) => LiquidityBook {
@@ -106,17 +120,47 @@ impl Backend {
                 }
             }
         };
+        let (head_sender, head_receiver) = watch::channel(liquidity_book.last_processed_block);
+        tokio::spawn(listen_for_heads(ws_url, head_sender));
 
-        Self {
-            provider: RootProvider::new_http(config.rpc_url),
+        Ok(Self {
+            http_provider,
+            head_receiver,
             aqua_router_address: config.aqua_router_address,
             stable_amm_app_address: config.stable_amm_app_address,
             liquidity_book,
-        }
+        })
     }
 }
 
-fn main() {
+async fn listen_for_heads(ws_url: Url, head_sender: watch::Sender<u64>) {
+    let ws_provider: RootProvider = match ClientBuilder::default()
+        .ws(WsConnect::new(ws_url.as_str()).with_max_retries(u32::MAX))
+        .await
+    {
+        Ok(client) => RootProvider::new(client),
+        Err(error) => {
+            eprintln!("failed to connect WebSocket provider: {error:#}");
+            return;
+        }
+    };
+    let mut subscription = match ws_provider.subscribe_blocks().await {
+        Ok(subscription) => subscription,
+        Err(error) => {
+            eprintln!("failed to subscribe to new block heads: {error:#}");
+            return;
+        }
+    };
+
+    while let Ok(header) = subscription.recv().await {
+        head_sender.send_replace(header.number);
+    }
+
+    eprintln!("new block head subscription ended");
+}
+
+#[tokio::main]
+async fn main() {
     let config = match Config::load() {
         Ok(config) => config,
         Err(error) => {
@@ -125,6 +169,13 @@ fn main() {
         }
     };
 
-    let _backend = Backend::new(config);
+    let _backend = match Backend::new(config) {
+        Ok(backend) => backend,
+        Err(error) => {
+            eprintln!("failed to create backend: {error:#}");
+            std::process::exit(1);
+        }
+    };
+
     println!("sealevel backend");
 }
