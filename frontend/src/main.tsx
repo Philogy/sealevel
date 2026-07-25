@@ -5,7 +5,7 @@ import './styles.css'
 
 const SEPOLIA_CHAIN_ID = '0xaa36a7'
 
-type Screen = 'home' | 'trader' | 'lp'
+type Screen = 'home' | 'trader' | 'lp' | 'addLiquidity'
 type TokenField = 'pay' | 'receive'
 
 type MetaMaskProvider = {
@@ -66,12 +66,14 @@ function quoteAtNinetyNinePercent(amount: bigint, inputDecimals: number, outputD
 
 function screenFromPath(pathname: string): Screen {
   if (pathname === '/trader') return 'trader'
+  if (pathname === '/lp/add') return 'addLiquidity'
   if (pathname === '/lp') return 'lp'
   return 'home'
 }
 
 function pathForScreen(screen: Screen) {
   if (screen === 'trader') return '/trader'
+  if (screen === 'addLiquidity') return '/lp/add'
   if (screen === 'lp') return '/lp'
   return '/'
 }
@@ -88,6 +90,10 @@ function App() {
   const [payAmount, setPayAmount] = useState('')
   const [payBalance, setPayBalance] = useState<bigint>()
   const [quoteAmount, setQuoteAmount] = useState<bigint>()
+  const [liquidityCurrency, setLiquidityCurrency] = useState<SeaLevelToken['currency']>('USD')
+  const [providedTokens, setProvidedTokens] = useState<SeaLevelToken[]>([])
+  const [acceptedTokenAddresses, setAcceptedTokenAddresses] = useState<string[]>([])
+  const [feePercent, setFeePercent] = useState('')
   const [activeTokenMenu, setActiveTokenMenu] = useState<TokenField>()
   const walletControlRef = useRef<HTMLDivElement>(null)
   const tokenMenuRef = useRef<HTMLDivElement>(null)
@@ -333,6 +339,33 @@ function App() {
 
   const parsedPayAmount = payToken ? parseTokenAmount(payAmount, payToken.decimals) : undefined
   const canRequestQuote = Boolean(payToken && receiveToken && parsedPayAmount && parsedPayAmount > 0n)
+  const liquidityTokens = sepoliaTokens.filter((token) => token.currency === liquidityCurrency)
+  const hasValidFee = /^\d+(\.\d{1,2})?$/.test(feePercent) && Number(feePercent) <= 655.35
+
+  const selectLiquidityCurrency = (currency: SeaLevelToken['currency']) => {
+    setLiquidityCurrency(currency)
+    setProvidedTokens([])
+    setAcceptedTokenAddresses([])
+  }
+
+  const toggleProvidedToken = (token: SeaLevelToken) => {
+    const isProvided = providedTokens.some((providedToken) => providedToken.address === token.address)
+    setProvidedTokens((tokens) => isProvided
+      ? tokens.filter((providedToken) => providedToken.address !== token.address)
+      : [...tokens, token])
+    if (!isProvided) {
+      setAcceptedTokenAddresses((addresses) => addresses.includes(token.address) ? addresses : [...addresses, token.address])
+    }
+  }
+
+  const toggleAcceptedToken = (token: SeaLevelToken) => {
+    const isProvided = providedTokens.some((providedToken) => providedToken.address === token.address)
+    if (isProvided) return
+
+    setAcceptedTokenAddresses((addresses) => addresses.includes(token.address)
+      ? addresses.filter((address) => address !== token.address)
+      : [...addresses, token.address])
+  }
 
   return (
     <main className="site-shell">
@@ -359,10 +392,10 @@ function App() {
               Trader Dashboard
             </button>
             <button
-              className={`dashboard-tab${screen === 'lp' ? ' dashboard-tab-active' : ''}`}
+              className={`dashboard-tab${screen === 'lp' || screen === 'addLiquidity' ? ' dashboard-tab-active' : ''}`}
               type="button"
               onClick={() => navigate('lp')}
-              aria-current={screen === 'lp' ? 'page' : undefined}
+              aria-current={screen === 'lp' || screen === 'addLiquidity' ? 'page' : undefined}
             >
               LP Dashboard
             </button>
@@ -536,10 +569,115 @@ function App() {
             </section>
           </div>
         </section>
+      ) : screen === 'lp' ? (
+        <section className="lp-dashboard" aria-labelledby="liquidity-title">
+          <div className="lp-page-header">
+            <h1 id="liquidity-title">Active Liquidity</h1>
+            <button className="add-liquidity-button" type="button" onClick={() => navigate('addLiquidity')}>
+              Add Liquidity
+            </button>
+          </div>
+          <div className="empty-liquidity">
+            <div className="empty-liquidity-mark" aria-hidden="true" />
+            <p>No active liquidity</p>
+            <button type="button" onClick={() => navigate('addLiquidity')}>Add your first position</button>
+          </div>
+        </section>
       ) : (
-        <section className="lp-dashboard" aria-labelledby="lp-title">
-          <p className="eyebrow">LP dashboard</p>
-          <h1 id="lp-title">LP DASHBOARD.</h1>
+        <section className="add-liquidity" aria-labelledby="add-liquidity-title">
+          <div className="lp-page-header">
+            <h1 id="add-liquidity-title">Add Liquidity</h1>
+          </div>
+          <div className="liquidity-form">
+            <section className="liquidity-group" aria-labelledby="liquidity-group-title">
+              <span id="liquidity-group-title">Liquidity group</span>
+              <div className="liquidity-group-options">
+                {(['USD', 'EUR'] as const).map((currency) => (
+                  <button
+                    className={`liquidity-group-button${liquidityCurrency === currency ? ' liquidity-group-button-active' : ''}`}
+                    type="button"
+                    key={currency}
+                    onClick={() => selectLiquidityCurrency(currency)}
+                    aria-pressed={liquidityCurrency === currency}
+                  >
+                    {currency}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="liquidity-fee">
+              <label>
+                <span>Trading fee</span>
+                <div>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Enter fee"
+                    aria-label="Trading fee as a percentage"
+                    value={feePercent}
+                    onChange={(event) => {
+                      const nextValue = event.target.value
+                      if (/^\d*(\.\d{0,2})?$/.test(nextValue)) setFeePercent(nextValue)
+                    }}
+                  />
+                  <span>%</span>
+                </div>
+              </label>
+            </section>
+
+            <div className="liquidity-lists">
+              <section className="liquidity-list" aria-labelledby="provide-title">
+                <div className="liquidity-list-heading">
+                  <h2 id="provide-title">Tokens you provide</h2>
+                  <span>Token approval required</span>
+                </div>
+                {liquidityTokens.map((token) => {
+                  const isProvided = providedTokens.some((providedToken) => providedToken.address === token.address)
+                  return (
+                    <div className={`liquidity-token-row${isProvided ? ' liquidity-token-row-active' : ''}`} key={token.address}>
+                      <button type="button" onClick={() => toggleProvidedToken(token)} aria-pressed={isProvided}>
+                        <img className="token-icon" src={token.logo} alt="" />
+                        <span>{token.symbol}</span>
+                        <small>{token.name}</small>
+                      </button>
+                      {isProvided && <input type="text" inputMode="decimal" placeholder="0.00" aria-label={`${token.symbol} liquidity amount`} />}
+                    </div>
+                  )
+                })}
+              </section>
+
+              <section className="liquidity-list" aria-labelledby="accept-title">
+                <div className="liquidity-list-heading">
+                  <h2 id="accept-title">Tokens you accept</h2>
+                  <span>No token approval required</span>
+                </div>
+                {liquidityTokens.map((token) => {
+                  const isProvided = providedTokens.some((providedToken) => providedToken.address === token.address)
+                  const isAccepted = acceptedTokenAddresses.includes(token.address)
+                  return (
+                    <button
+                      className={`accept-token-row${isAccepted ? ' accept-token-row-active' : ''}`}
+                      type="button"
+                      key={token.address}
+                      onClick={() => toggleAcceptedToken(token)}
+                      aria-pressed={isAccepted}
+                      disabled={isProvided}
+                    >
+                      <span className="accept-indicator" aria-hidden="true" />
+                      <img className="token-icon" src={token.logo} alt="" />
+                      <span>{token.symbol}</span>
+                      {isProvided && <small>Included with liquidity</small>}
+                    </button>
+                  )
+                })}
+              </section>
+            </div>
+
+            <button className="review-liquidity-button" type="button" disabled={providedTokens.length === 0 || !hasValidFee}>
+              Review approvals
+            </button>
+          </div>
         </section>
       )}
 
