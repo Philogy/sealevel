@@ -45,8 +45,6 @@ pub struct Config {
     pub aqua_router_address: Address,
     pub aqua_router_creation_block: u64,
     pub sealevel_app_address: Address,
-    pub bot_private_key: PrivateKeySigner,
-    pub trade_interval: Duration,
 }
 
 impl Config {
@@ -72,17 +70,6 @@ impl Config {
             .context("SEALEVEL_APP_ADDRESS must be set")?
             .parse::<Address>()
             .context("SEALEVEL_APP_ADDRESS must be a valid address")?;
-        let bot_private_key = std::env::var("BOT_PRIVATE_KEY")
-            .context("BOT_PRIVATE_KEY must be set")?
-            .parse::<PrivateKeySigner>()
-            .context("BOT_PRIVATE_KEY must be a valid private key")?;
-        let trade_interval_seconds = std::env::var("TRADE_INTERVAL_SECS")
-            .context("TRADE_INTERVAL_SECS must be set")?
-            .parse::<u64>()
-            .context("TRADE_INTERVAL_SECS must be a u64")?;
-        if trade_interval_seconds == 0 {
-            bail!("TRADE_INTERVAL_SECS must be greater than zero");
-        }
 
         Ok(Self {
             rpc_url,
@@ -90,8 +77,6 @@ impl Config {
             aqua_router_address,
             aqua_router_creation_block,
             sealevel_app_address,
-            bot_private_key,
-            trade_interval: Duration::from_secs(trade_interval_seconds),
         })
     }
 }
@@ -478,21 +463,59 @@ async fn main() {
         }
     };
     let http_liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
-    let trader_liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
-    let trader = trader::Trader::new(
-        config.rpc_url.clone(),
-        config.bot_private_key,
-        config.chain_id,
-        config.sealevel_app_address,
-        config.trade_interval,
-        trader_liquidity_book_receiver,
-    );
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    let (start_trader, trade_interval_secs) = match arguments.as_slice() {
+        [] => (false, None),
+        [argument] if argument == "--trader" => (true, None),
+        [argument, trade_interval_secs] if argument == "--trader" => {
+            let trade_interval_secs = match trade_interval_secs.parse::<u32>() {
+                Ok(trade_interval_secs) => trade_interval_secs,
+                Err(error) => {
+                    error!("TRADE_INTERVAL_SECS must be a u32: {error}");
+                    std::process::exit(1);
+                }
+            };
+            (true, Some(trade_interval_secs))
+        }
+        _ => {
+            error!("usage: sealevel-backend [--trader [TRADE_INTERVAL_SECS]]");
+            std::process::exit(1);
+        }
+    };
+    if start_trader {
+        let bot_private_key = match std::env::var("BOT_PRIVATE_KEY")
+            .context("BOT_PRIVATE_KEY must be set")
+            .and_then(|private_key| {
+                private_key
+                    .parse::<PrivateKeySigner>()
+                    .context("BOT_PRIVATE_KEY must be a valid private key")
+            }) {
+            Ok(bot_private_key) => bot_private_key,
+            Err(error) => {
+                error!("failed to load trader configuration: {error:#}");
+                std::process::exit(1);
+            }
+        };
+        let trader_liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
+        let trader = trader::Trader::new(
+            config.rpc_url.clone(),
+            bot_private_key,
+            config.chain_id,
+            config.sealevel_app_address,
+            trade_interval_secs,
+            trader_liquidity_book_receiver,
+        );
+        tokio::spawn(async move {
+            if let Err(error) = trader.run().await {
+                error!("trader stopped: {error:#}");
+            }
+        });
+        info!("trader started");
+    }
 
-    if let Err(error) = tokio::try_join!(
-        backend.run(),
-        run_http_server(http_liquidity_book_receiver),
-        trader.run(),
-    ) {
+    if let Err(error) =
+        tokio::try_join!(backend.run(), run_http_server(http_liquidity_book_receiver))
+    {
         error!("backend stopped: {error:#}");
         std::process::exit(1);
     }

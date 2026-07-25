@@ -14,6 +14,7 @@ use url::Url;
 
 const BPS_BASE: u64 = 10_000;
 const MAX_RANDOM_TRADE: u64 = 100;
+const TRADE_INTERVAL_SECS: u32 = 10;
 
 sol! {
     function decimals() external view returns (uint8);
@@ -43,7 +44,7 @@ impl Trader {
         signer: PrivateKeySigner,
         chain_id: u64,
         app_address: Address,
-        trade_interval: Duration,
+        trade_interval_secs: Option<u32>,
         liquidity_book: watch::Receiver<Arc<LiquidityBook>>,
     ) -> Self {
         let signer = signer.with_chain_id(Some(chain_id));
@@ -52,6 +53,14 @@ impl Trader {
             .wallet(signer)
             .connect_http(rpc_url)
             .erased();
+        let trade_interval = match trade_interval_secs {
+            Some(0) => {
+                warn!("TRADE_INTERVAL_SECS cannot be zero; using {TRADE_INTERVAL_SECS}");
+                Duration::from_secs(u64::from(TRADE_INTERVAL_SECS))
+            }
+            Some(trade_interval_secs) => Duration::from_secs(u64::from(trade_interval_secs)),
+            None => Duration::from_secs(u64::from(TRADE_INTERVAL_SECS)),
+        };
 
         Self {
             provider,
