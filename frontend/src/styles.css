@@ -1029,6 +1029,145 @@ h1 {
   cursor: not-allowed;
 }
 
+.approval-review {
+  margin-top: 4px;
+  padding: 22px;
+  border-top: 1px solid rgb(150 228 213 / 14%);
+  background: rgb(2 17 22 / 24%);
+}
+
+.approval-review-heading {
+  display: flex;
+  margin-bottom: 13px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.approval-review-heading h2 {
+  margin: 0;
+  color: #e5faf4;
+  font-size: 0.92rem;
+}
+
+.approval-token-row {
+  display: grid;
+  min-height: 48px;
+  padding: 8px;
+  border: 1px solid rgb(150 228 213 / 14%);
+  border-radius: 3px;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 9px;
+}
+
+.approval-token-row + .approval-token-row {
+  margin-top: 6px;
+}
+
+.approval-token-row > span {
+  color: #e5faf4;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.approval-token-row small {
+  overflow: hidden;
+  color: rgb(169 242 223 / 58%);
+  font-size: 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-token-row > button {
+  padding: 8px 10px;
+  border: 1px solid rgb(232 134 115 / 62%);
+  border-radius: 2px;
+  background: transparent;
+  color: #f0a08d;
+  cursor: pointer;
+  font-size: 0.67rem;
+  font-weight: 800;
+}
+
+.approval-token-row > button:hover:not(:disabled) {
+  background: rgb(232 134 115 / 12%);
+}
+
+.approval-token-row > button:disabled {
+  border-color: rgb(169 242 223 / 20%);
+  color: rgb(169 242 223 / 58%);
+  cursor: default;
+}
+
+.approval-token-row > button:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
+.approval-error {
+  margin: 12px 0 0;
+  color: #f0a08d;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.65rem;
+}
+
+.ship-liquidity-button {
+  width: 100%;
+  margin-top: 14px;
+  padding: 13px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: #e88673;
+  color: #26110e;
+  cursor: pointer;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.ship-liquidity-button:hover:not(:disabled) {
+  background: #f0a08d;
+}
+
+.ship-liquidity-button:disabled {
+  background: rgb(232 134 115 / 46%);
+  color: rgb(38 17 14 / 72%);
+  cursor: default;
+}
+
+.ship-liquidity-button:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
+.shipping-success {
+  display: flex;
+  margin-top: 14px;
+  padding: 13px;
+  border: 1px solid rgb(169 242 223 / 24%);
+  border-radius: 2px;
+  background: rgb(167 242 223 / 8%);
+  color: #a7f2df;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.67rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.shipping-success button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #d1fff2;
+  cursor: pointer;
+  font: inherit;
+}
+
+.shipping-success button:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
 @media (max-width: 640px) {
   .topbar,
   .hero {

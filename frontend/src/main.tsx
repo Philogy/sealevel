@@ -1,9 +1,28 @@
 import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { encodeFunctionData } from 'viem'
 import { sepoliaTokens, type SeaLevelToken } from './tokens'
 import './styles.css'
 
 const SEPOLIA_CHAIN_ID = '0xaa36a7'
+const AQUA_ROUTER_ADDRESS = '0x0A1ff91C2f5e29B1f0910c96aE50F30F1C09EF82' as const
+const SEA_LEVEL_APP_ADDRESS = '0x1fbA4c91c08FbbB1e8E6A0057cde2ee87B25822A' as const
+const MAX_UINT256 = (1n << 256n) - 1n
+
+const aquaAbi = [
+  {
+    type: 'function',
+    name: 'ship',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'app', type: 'address' },
+      { name: 'strategy', type: 'bytes' },
+      { name: 'tokens', type: 'address[]' },
+      { name: 'amounts', type: 'uint256[]' },
+    ],
+    outputs: [{ name: 'strategyHash', type: 'bytes32' }],
+  },
+] as const
 
 type Screen = 'home' | 'trader' | 'lp' | 'addLiquidity'
 type TokenField = 'pay' | 'receive'
@@ -45,6 +64,27 @@ function balanceOfCallData(account: string) {
   return `0x70a08231${account.slice(2).padStart(64, '0')}`
 }
 
+function allowanceCallData(owner: string, spender: string) {
+  return `0xdd62ed3e${owner.slice(2).padStart(64, '0')}${spender.slice(2).padStart(64, '0')}`
+}
+
+function approveCallData(spender: string) {
+  return `0x095ea7b3${spender.slice(2).padStart(64, '0')}${MAX_UINT256.toString(16)}`
+}
+
+async function waitForTransactionReceipt(provider: MetaMaskProvider, transactionHash: string) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const receipt = await provider.request<{ status?: string } | null>({
+      method: 'eth_getTransactionReceipt',
+      params: [transactionHash],
+    })
+    if (receipt) return receipt
+    await new Promise((resolve) => window.setTimeout(resolve, 1_000))
+  }
+
+  throw new Error('Transaction confirmation timed out.')
+}
+
 function parseTokenAmount(input: string, decimals: number) {
   if (!/^\d*(\.\d*)?$/.test(input) || input === '' || input === '.') return
 
@@ -62,6 +102,11 @@ function quoteAtNinetyNinePercent(amount: bigint, inputDecimals: number, outputD
     ? amount / 10n ** BigInt(inputDecimals - outputDecimals)
     : amount * 10n ** BigInt(outputDecimals - inputDecimals)
   return normalizedAmount * 99n / 100n
+}
+
+function feePercentToBps(feePercent: string) {
+  const [whole, fraction = ''] = feePercent.split('.')
+  return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'))
 }
 
 function screenFromPath(pathname: string): Screen {
@@ -93,7 +138,15 @@ function App() {
   const [liquidityCurrency, setLiquidityCurrency] = useState<SeaLevelToken['currency']>('USD')
   const [providedTokens, setProvidedTokens] = useState<SeaLevelToken[]>([])
   const [acceptedTokenAddresses, setAcceptedTokenAddresses] = useState<string[]>([])
+  const [providedAmounts, setProvidedAmounts] = useState<Record<string, string>>({})
   const [feePercent, setFeePercent] = useState('')
+  const [isReviewingApprovals, setIsReviewingApprovals] = useState(false)
+  const [allowances, setAllowances] = useState<Record<string, bigint>>({})
+  const [approvingTokenAddress, setApprovingTokenAddress] = useState<string>()
+  const [approvalError, setApprovalError] = useState<string>()
+  const [isShippingLiquidity, setIsShippingLiquidity] = useState(false)
+  const [shippingError, setShippingError] = useState<string>()
+  const [shippingSucceeded, setShippingSucceeded] = useState(false)
   const [activeTokenMenu, setActiveTokenMenu] = useState<TokenField>()
   const walletControlRef = useRef<HTMLDivElement>(null)
   const tokenMenuRef = useRef<HTMLDivElement>(null)
@@ -342,29 +395,144 @@ function App() {
   const liquidityTokens = sepoliaTokens.filter((token) => token.currency === liquidityCurrency)
   const hasValidFee = /^\d+(\.\d{1,2})?$/.test(feePercent) && Number(feePercent) <= 655.35
 
+  const invalidateApprovalReview = () => {
+    setIsReviewingApprovals(false)
+    setAllowances({})
+    setApprovalError(undefined)
+    setShippingError(undefined)
+    setShippingSucceeded(false)
+  }
+
   const selectLiquidityCurrency = (currency: SeaLevelToken['currency']) => {
     setLiquidityCurrency(currency)
     setProvidedTokens([])
     setAcceptedTokenAddresses([])
+    setProvidedAmounts({})
+    invalidateApprovalReview()
   }
 
   const toggleProvidedToken = (token: SeaLevelToken) => {
+    invalidateApprovalReview()
     const isProvided = providedTokens.some((providedToken) => providedToken.address === token.address)
     setProvidedTokens((tokens) => isProvided
       ? tokens.filter((providedToken) => providedToken.address !== token.address)
       : [...tokens, token])
+    if (isProvided) {
+      setProvidedAmounts((amounts) => {
+        const { [token.address]: _, ...remainingAmounts } = amounts
+        return remainingAmounts
+      })
+    }
     if (!isProvided) {
       setAcceptedTokenAddresses((addresses) => addresses.includes(token.address) ? addresses : [...addresses, token.address])
     }
   }
 
   const toggleAcceptedToken = (token: SeaLevelToken) => {
+    invalidateApprovalReview()
     const isProvided = providedTokens.some((providedToken) => providedToken.address === token.address)
     if (isProvided) return
 
     setAcceptedTokenAddresses((addresses) => addresses.includes(token.address)
       ? addresses.filter((address) => address !== token.address)
       : [...addresses, token.address])
+  }
+
+  const loadAllowances = async () => {
+    const provider = window.ethereum
+    if (!provider?.isMetaMask || !address || !isOnSepolia) return
+
+    const tokenAllowances = await Promise.all(providedTokens.map(async (token) => {
+      const result = await provider.request<string>({
+        method: 'eth_call',
+        params: [{ to: token.address, data: allowanceCallData(address, AQUA_ROUTER_ADDRESS) }, 'latest'],
+      })
+      return [token.address, BigInt(result)] as const
+    }))
+    setAllowances(Object.fromEntries(tokenAllowances))
+  }
+
+  const openApprovalReview = async () => {
+    if (!address) {
+      await connectWallet()
+      return
+    }
+    if (!isOnSepolia) {
+      await switchToSepolia()
+      return
+    }
+
+    setApprovalError(undefined)
+    setIsReviewingApprovals(true)
+    try {
+      await loadAllowances()
+    } catch {
+      setApprovalError('Unable to read token approvals from MetaMask.')
+    }
+  }
+
+  const approveToken = async (token: SeaLevelToken) => {
+    const provider = window.ethereum
+    if (!provider?.isMetaMask || !address || !isOnSepolia) return
+
+    setApprovingTokenAddress(token.address)
+    setApprovalError(undefined)
+    try {
+      const transactionHash = await provider.request<string>({
+        method: 'eth_sendTransaction',
+        params: [{
+          from: address,
+          to: token.address,
+          data: approveCallData(AQUA_ROUTER_ADDRESS),
+        }],
+      })
+      const receipt = await waitForTransactionReceipt(provider, transactionHash)
+      if (receipt.status !== '0x1') throw new Error('Approval transaction failed.')
+      await loadAllowances()
+    } catch {
+      setApprovalError(`Unable to approve ${token.symbol}.`)
+    } finally {
+      setApprovingTokenAddress(undefined)
+    }
+  }
+
+  const hasProvidedAmounts = providedTokens.length > 0 && providedTokens.every((token) => {
+    const amount = parseTokenAmount(providedAmounts[token.address] ?? '', token.decimals)
+    return amount !== undefined && amount > 0n
+  })
+  const activeLiquidityTokens = liquidityTokens.filter((token) => acceptedTokenAddresses.includes(token.address))
+  const allProvidedTokensApproved = isReviewingApprovals && providedTokens.every((token) => (allowances[token.address] ?? 0n) > 0n)
+
+  const shipLiquidity = async () => {
+    const provider = window.ethereum
+    if (!provider?.isMetaMask || !address || !isOnSepolia || !allProvidedTokensApproved) return
+
+    const amounts = activeLiquidityTokens.map((token) => {
+      const amount = parseTokenAmount(providedAmounts[token.address] ?? '', token.decimals)
+      return amount ?? 0n
+    })
+    const strategy = `0x${feePercentToBps(feePercent).toString(16).padStart(64, '0')}` as `0x${string}`
+    const data = encodeFunctionData({
+      abi: aquaAbi,
+      functionName: 'ship',
+      args: [SEA_LEVEL_APP_ADDRESS, strategy, activeLiquidityTokens.map((token) => token.address), amounts],
+    })
+
+    setIsShippingLiquidity(true)
+    setShippingError(undefined)
+    try {
+      const transactionHash = await provider.request<string>({
+        method: 'eth_sendTransaction',
+        params: [{ from: address, to: AQUA_ROUTER_ADDRESS, data }],
+      })
+      const receipt = await waitForTransactionReceipt(provider, transactionHash)
+      if (receipt.status !== '0x1') throw new Error('Ship transaction failed.')
+      setShippingSucceeded(true)
+    } catch {
+      setShippingError('Unable to ship liquidity.')
+    } finally {
+      setIsShippingLiquidity(false)
+    }
   }
 
   return (
@@ -615,7 +783,10 @@ function App() {
                     value={feePercent}
                     onChange={(event) => {
                       const nextValue = event.target.value
-                      if (/^\d*(\.\d{0,2})?$/.test(nextValue)) setFeePercent(nextValue)
+                      if (/^\d*(\.\d{0,2})?$/.test(nextValue)) {
+                        setFeePercent(nextValue)
+                        invalidateApprovalReview()
+                      }
                     }}
                   />
                   <span>%</span>
@@ -638,7 +809,22 @@ function App() {
                         <span>{token.symbol}</span>
                         <small>{token.name}</small>
                       </button>
-                      {isProvided && <input type="text" inputMode="decimal" placeholder="0.00" aria-label={`${token.symbol} liquidity amount`} />}
+                      {isProvided && (
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="0.00"
+                          aria-label={`${token.symbol} liquidity amount`}
+                          value={providedAmounts[token.address] ?? ''}
+                          onChange={(event) => {
+                            setProvidedAmounts((amounts) => ({
+                              ...amounts,
+                              [token.address]: event.target.value,
+                            }))
+                            invalidateApprovalReview()
+                          }}
+                        />
+                      )}
                     </div>
                   )
                 })}
@@ -671,9 +857,53 @@ function App() {
               </section>
             </div>
 
-            <button className="review-liquidity-button" type="button" disabled={providedTokens.length === 0 || !hasValidFee}>
+            <button
+              className="review-liquidity-button"
+              type="button"
+              onClick={() => void openApprovalReview()}
+              disabled={!hasProvidedAmounts || !hasValidFee}
+            >
               Review approvals
             </button>
+            {isReviewingApprovals && (
+              <section className="approval-review" aria-labelledby="approval-review-title">
+                <div className="approval-review-heading">
+                  <h2 id="approval-review-title">Approval review</h2>
+                </div>
+                {providedTokens.map((token) => {
+                  const allowance = allowances[token.address]
+                  const isApproved = allowance !== undefined && allowance > 0n
+                  const isApproving = approvingTokenAddress === token.address
+                  return (
+                    <div className="approval-token-row" key={token.address}>
+                      <img className="token-icon" src={token.logo} alt="" />
+                      <span>{token.symbol}</span>
+                      <small>{isApproved ? 'Approved for Aqua' : 'Approval required'}</small>
+                      <button
+                        type="button"
+                        onClick={() => void approveToken(token)}
+                        disabled={isApproved || isApproving}
+                      >
+                        {isApproved ? 'Approved' : isApproving ? 'Approving...' : 'Approve'}
+                      </button>
+                    </div>
+                  )
+                })}
+                {approvalError && <p className="approval-error" role="status">{approvalError}</p>}
+                {allProvidedTokensApproved && !shippingSucceeded && (
+                  <button className="ship-liquidity-button" type="button" onClick={() => void shipLiquidity()} disabled={isShippingLiquidity}>
+                    {isShippingLiquidity ? 'Shipping liquidity...' : 'Ship liquidity'}
+                  </button>
+                )}
+                {shippingError && <p className="approval-error" role="status">{shippingError}</p>}
+                {shippingSucceeded && (
+                  <div className="shipping-success" role="status">
+                    <span>Liquidity shipped</span>
+                    <button type="button" onClick={() => navigate('lp')}>View active liquidity</button>
+                  </div>
+                )}
+              </section>
+            )}
           </div>
         </section>
       )}
