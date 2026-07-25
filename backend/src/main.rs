@@ -1,6 +1,8 @@
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::ClientBuilder;
+use alloy_rpc_types_eth::Filter;
+use alloy_sol_types::{SolEvent, sol};
 use alloy_transport_ws::WsConnect;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -10,6 +12,14 @@ use tokio::sync::watch;
 use url::Url;
 
 const LIQUIDITY_BOOK_PATH: &str = "liquidity_book.json";
+const BLOCK_RANGE_SIZE: u64 = 100;
+
+sol! {
+    event Shipped(address maker, address app, bytes32 strategyHash, bytes strategy);
+    event Docked(address maker, address app, bytes32 strategyHash);
+    event Pulled(address maker, address app, bytes32 strategyHash, address token, uint256 amount);
+    event Pushed(address maker, address app, bytes32 strategyHash, address token, uint256 amount);
+}
 
 pub struct Config {
     pub rpc_url: Url,
@@ -131,6 +141,44 @@ impl Backend {
             liquidity_book,
         })
     }
+
+    pub async fn run(&mut self) -> Result<()> {
+        let mut current_block = self
+            .http_provider
+            .get_block_number()
+            .await
+            .context("failed to get current block number")?;
+
+        loop {
+            if self.liquidity_book.last_processed_block == current_block {
+                self.head_receiver
+                    .changed()
+                    .await
+                    .context("new block head subscription stopped")?;
+                current_block = *self.head_receiver.borrow_and_update();
+            }
+
+            let filter = Filter::new()
+                .address(self.aqua_router_address)
+                .from_block(self.liquidity_book.last_processed_block + 1)
+                .to_block(
+                    current_block.min(self.liquidity_book.last_processed_block + BLOCK_RANGE_SIZE),
+                )
+                .event_signature(vec![
+                    Shipped::SIGNATURE_HASH,
+                    Docked::SIGNATURE_HASH,
+                    Pulled::SIGNATURE_HASH,
+                    Pushed::SIGNATURE_HASH,
+                ]);
+            self.http_provider
+                .get_logs(&filter)
+                .await
+                .context("failed to get AquaRouter logs")?;
+
+            self.liquidity_book.last_processed_block =
+                current_block.min(self.liquidity_book.last_processed_block + BLOCK_RANGE_SIZE);
+        }
+    }
 }
 
 async fn listen_for_heads(ws_url: Url, head_sender: watch::Sender<u64>) {
@@ -169,7 +217,7 @@ async fn main() {
         }
     };
 
-    let _backend = match Backend::new(config) {
+    let mut backend = match Backend::new(config) {
         Ok(backend) => backend,
         Err(error) => {
             eprintln!("failed to create backend: {error:#}");
@@ -177,5 +225,8 @@ async fn main() {
         }
     };
 
-    println!("sealevel backend");
+    if let Err(error) = backend.run().await {
+        eprintln!("backend stopped: {error:#}");
+        std::process::exit(1);
+    }
 }

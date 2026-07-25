@@ -3186,6 +3186,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-client",
+ "alloy-rpc-types-eth",
+ "alloy-sol-types",
  "alloy-transport-ws",
  "anyhow",
  "dotenvy",
