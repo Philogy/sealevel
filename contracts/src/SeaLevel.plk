@@ -43,10 +43,6 @@ const setup_token = fn () never {
     @evm_stop();
 };
 
-const hash_strategy = fn (fee: u16) bytes32 {
-    keccak256(abi_encode(fee))
-};
-
 const ONE_BPS = @evm_exp(10, 4);
 
 const Strategy = struct {
