@@ -1,7 +1,10 @@
+mod trader;
+
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::ClientBuilder;
 use alloy_rpc_types_eth::{Filter, Log, TransactionInput, TransactionRequest};
+use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent, sol};
 use alloy_transport_ws::WsConnect;
 use anyhow::{Context, Result, anyhow, bail};
@@ -42,6 +45,8 @@ pub struct Config {
     pub aqua_router_address: Address,
     pub aqua_router_creation_block: u64,
     pub sealevel_app_address: Address,
+    pub bot_private_key: PrivateKeySigner,
+    pub trade_interval: Duration,
 }
 
 impl Config {
@@ -67,6 +72,17 @@ impl Config {
             .context("SEALEVEL_APP_ADDRESS must be set")?
             .parse::<Address>()
             .context("SEALEVEL_APP_ADDRESS must be a valid address")?;
+        let bot_private_key = std::env::var("BOT_PRIVATE_KEY")
+            .context("BOT_PRIVATE_KEY must be set")?
+            .parse::<PrivateKeySigner>()
+            .context("BOT_PRIVATE_KEY must be a valid private key")?;
+        let trade_interval_seconds = std::env::var("TRADE_INTERVAL_SECS")
+            .context("TRADE_INTERVAL_SECS must be set")?
+            .parse::<u64>()
+            .context("TRADE_INTERVAL_SECS must be a u64")?;
+        if trade_interval_seconds == 0 {
+            bail!("TRADE_INTERVAL_SECS must be greater than zero");
+        }
 
         Ok(Self {
             rpc_url,
@@ -74,6 +90,8 @@ impl Config {
             aqua_router_address,
             aqua_router_creation_block,
             sealevel_app_address,
+            bot_private_key,
+            trade_interval: Duration::from_secs(trade_interval_seconds),
         })
     }
 }
@@ -459,9 +477,22 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    let liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
+    let http_liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
+    let trader_liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
+    let trader = trader::Trader::new(
+        config.rpc_url.clone(),
+        config.bot_private_key,
+        config.chain_id,
+        config.sealevel_app_address,
+        config.trade_interval,
+        trader_liquidity_book_receiver,
+    );
 
-    if let Err(error) = tokio::try_join!(backend.run(), run_http_server(liquidity_book_receiver)) {
+    if let Err(error) = tokio::try_join!(
+        backend.run(),
+        run_http_server(http_liquidity_book_receiver),
+        trader.run(),
+    ) {
         error!("backend stopped: {error:#}");
         std::process::exit(1);
     }
