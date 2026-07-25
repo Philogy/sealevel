@@ -27,6 +27,23 @@ const aquaAbi = [
 type Screen = 'home' | 'trader' | 'lp' | 'addLiquidity'
 type TokenField = 'pay' | 'receive'
 
+type RawMaker = {
+  accepted_strategies: Record<string, string>
+  tokens: Record<string, Record<string, string>>
+}
+
+type MakerResponse = {
+  last_processed_block: number
+  maker: RawMaker | null
+}
+
+type ActivePosition = {
+  strategyHash: string
+  feeBps: number
+  group: SeaLevelToken['currency'] | 'Mixed'
+  tokens: Array<{ token: SeaLevelToken; virtualBalance: bigint }>
+}
+
 type MetaMaskProvider = {
   isMetaMask?: boolean
   request: <Result>(args: { method: string; params?: unknown[] }) => Promise<Result>
@@ -109,6 +126,26 @@ function feePercentToBps(feePercent: string) {
   return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'))
 }
 
+function positionsFromMaker(maker: RawMaker): ActivePosition[] {
+  const tokensByAddress = new Map(sepoliaTokens.map((token) => [token.address.toLowerCase(), token]))
+
+  return Object.entries(maker.accepted_strategies).map(([strategyHash, strategy]) => {
+    const tokens = Object.entries(maker.tokens).flatMap(([address, balances]) => {
+      const token = tokensByAddress.get(address.toLowerCase())
+      const rawBalance = balances[strategyHash]
+      return token && rawBalance !== undefined ? [{ token, virtualBalance: BigInt(rawBalance) }] : []
+    })
+    const currencies = new Set(tokens.map(({ token }) => token.currency))
+
+    return {
+      strategyHash,
+      feeBps: Number(BigInt(strategy)),
+      group: currencies.size === 1 ? tokens[0].token.currency : 'Mixed',
+      tokens,
+    }
+  })
+}
+
 function screenFromPath(pathname: string): Screen {
   if (pathname === '/trader') return 'trader'
   if (pathname === '/lp/add') return 'addLiquidity'
@@ -147,6 +184,11 @@ function App() {
   const [isShippingLiquidity, setIsShippingLiquidity] = useState(false)
   const [shippingError, setShippingError] = useState<string>()
   const [shippingSucceeded, setShippingSucceeded] = useState(false)
+  const [activePositions, setActivePositions] = useState<ActivePosition[]>([])
+  const [positionAllowances, setPositionAllowances] = useState<Record<string, bigint>>({})
+  const [positionAllowancesError, setPositionAllowancesError] = useState<string>()
+  const [isLoadingPositions, setIsLoadingPositions] = useState(false)
+  const [positionsError, setPositionsError] = useState<string>()
   const [activeTokenMenu, setActiveTokenMenu] = useState<TokenField>()
   const walletControlRef = useRef<HTMLDivElement>(null)
   const tokenMenuRef = useRef<HTMLDivElement>(null)
@@ -240,6 +282,56 @@ function App() {
       document.removeEventListener('keydown', closeOnEscape)
     }
   }, [activeTokenMenu])
+
+  useEffect(() => {
+    const provider = window.ethereum
+    if (screen !== 'lp' || !provider?.isMetaMask || !address || !isOnSepolia) return
+
+    const controller = new AbortController()
+    let current = true
+    const loadPositions = async () => {
+      setIsLoadingPositions(true)
+      setPositionsError(undefined)
+      setPositionAllowances({})
+      setPositionAllowancesError(undefined)
+      let positions: ActivePosition[]
+      try {
+        const response = await fetch(`/api/makers/${address}`, { signal: controller.signal })
+        if (!response.ok) throw new Error('Maker request failed.')
+        const payload = await response.json() as MakerResponse
+        positions = payload.maker ? positionsFromMaker(payload.maker) : []
+        setActivePositions(positions)
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        setPositionsError('Unable to load active liquidity: SeaLevel backend returned an error.')
+        return
+      }
+
+      try {
+        const tokens = [...new Map(positions
+          .flatMap((position) => position.tokens.map(({ token }) => [token.address, token] as const)))
+          .values()]
+        const allowanceEntries = await Promise.all(tokens.map(async (token) => {
+          const allowance = await provider.request<string>({
+            method: 'eth_call',
+            params: [{ to: token.address, data: allowanceCallData(address, AQUA_ROUTER_ADDRESS) }, 'latest'],
+          })
+          return [token.address, BigInt(allowance)] as const
+        }))
+        if (current) setPositionAllowances(Object.fromEntries(allowanceEntries))
+      } catch (error) {
+        if (current) setPositionAllowancesError('Unable to check token approvals.')
+      } finally {
+        if (!controller.signal.aborted) setIsLoadingPositions(false)
+      }
+    }
+
+    void loadPositions()
+    return () => {
+      current = false
+      controller.abort()
+    }
+  }, [address, isOnSepolia, screen])
 
   useEffect(() => {
     const provider = window.ethereum
@@ -741,12 +833,76 @@ function App() {
         <section className="lp-dashboard" aria-labelledby="liquidity-title">
           <div className="lp-page-header">
             <h1 id="liquidity-title">Active Liquidity</h1>
+            {activePositions.length > 0 && (
+              <button className="add-liquidity-button" type="button" onClick={() => navigate('addLiquidity')}>
+                Add Liquidity
+              </button>
+            )}
           </div>
-          <div className="empty-liquidity">
-            <div className="empty-liquidity-mark" aria-hidden="true" />
-            <p>No active liquidity</p>
-            <button type="button" onClick={() => navigate('addLiquidity')}>Add your first position</button>
-          </div>
+          {isLoadingPositions ? (
+            <div className="empty-liquidity">
+              <div className="empty-liquidity-mark" aria-hidden="true" />
+              <p>Loading active liquidity</p>
+            </div>
+          ) : positionsError ? (
+            <div className="empty-liquidity">
+              <div className="empty-liquidity-mark" aria-hidden="true" />
+              <p>{positionsError}</p>
+            </div>
+          ) : activePositions.length === 0 ? (
+            <div className="empty-liquidity">
+              <div className="empty-liquidity-mark" aria-hidden="true" />
+              <p>No active liquidity</p>
+              <button type="button" onClick={() => navigate('addLiquidity')}>Add your first position</button>
+            </div>
+          ) : (
+            <div className="positions-list">
+              {activePositions.map((position) => {
+                const providedTokens = position.tokens.filter(({ token }) => (positionAllowances[token.address] ?? 0n) > 0n)
+                const acceptedTokens = position.tokens.filter(({ token }) => (positionAllowances[token.address] ?? 0n) === 0n)
+
+                return (
+                  <article className="position-card" key={position.strategyHash}>
+                    <div className="position-card-heading">
+                      <div>
+                        <h2>{position.group} liquidity</h2>
+                        <span>Fee {formatTokenAmount(BigInt(position.feeBps), 2)}%</span>
+                      </div>
+                      <span className="position-status">Active</span>
+                    </div>
+                    {positionAllowancesError ? (
+                      <p className="position-role-error" role="status">{positionAllowancesError}</p>
+                    ) : (
+                      <div className="position-token-list">
+                        <section className="position-token-group" aria-label="Provided tokens">
+                          <h3>Provided tokens</h3>
+                          {providedTokens.map(({ token, virtualBalance }) => (
+                            <div className="position-token-row" key={token.address}>
+                              <img className="token-icon" src={token.logo} alt="" />
+                              <span>{token.symbol}</span>
+                              <strong>{formatTokenAmount(virtualBalance, token.decimals)}</strong>
+                            </div>
+                          ))}
+                        </section>
+                        {acceptedTokens.length > 0 && (
+                          <section className="position-token-group" aria-label="Accepted tokens">
+                            <h3>Accepted tokens</h3>
+                            {acceptedTokens.map(({ token, virtualBalance }) => (
+                              <div className="position-token-row" key={token.address}>
+                                <img className="token-icon" src={token.logo} alt="" />
+                                <span>{token.symbol}</span>
+                                <strong>{formatTokenAmount(virtualBalance, token.decimals)}</strong>
+                              </div>
+                            ))}
+                          </section>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                )
+              })}
+            </div>
+          )}
         </section>
       ) : (
         <section className="add-liquidity" aria-labelledby="add-liquidity-title">

@@ -774,6 +774,110 @@ h1 {
   outline-offset: 3px;
 }
 
+.positions-list {
+  display: grid;
+  gap: 12px;
+}
+
+.position-card {
+  overflow: hidden;
+  border: 1px solid rgb(150 228 213 / 21%);
+  border-radius: 4px;
+  background: rgb(3 22 28 / 48%);
+  box-shadow: 0 20px 50px rgb(0 8 11 / 13%);
+}
+
+.position-card-heading {
+  display: flex;
+  padding: 20px 22px;
+  border-bottom: 1px solid rgb(150 228 213 / 14%);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.position-card-heading h2 {
+  margin: 0;
+  color: #e5faf4;
+  font-size: 1rem;
+}
+
+.position-card-heading div > span,
+.position-status {
+  color: rgb(169 242 223 / 55%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.61rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.position-card-heading div > span {
+  display: block;
+  margin-top: 5px;
+}
+
+.position-status {
+  padding: 6px 8px;
+  border: 1px solid rgb(169 242 223 / 22%);
+  border-radius: 2px;
+  color: #a7f2df;
+}
+
+.position-token-list {
+  display: grid;
+  padding: 9px 12px;
+}
+
+.position-token-group + .position-token-group {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgb(150 228 213 / 14%);
+}
+
+.position-token-group h3 {
+  margin: 4px 10px 8px;
+  color: rgb(169 242 223 / 55%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.58rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.position-token-row {
+  display: grid;
+  min-height: 46px;
+  padding: 8px 10px;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  column-gap: 10px;
+}
+
+.position-token-row + .position-token-row {
+  border-top: 1px solid rgb(150 228 213 / 10%);
+}
+
+.position-token-row > span {
+  color: #d9f4ed;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.position-token-row strong {
+  color: #a7f2df;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.position-role-error {
+  margin: 0;
+  padding: 18px 22px;
+  color: #ffe0ac;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.67rem;
+}
+
 .liquidity-form {
   border: 1px solid rgb(150 228 213 / 21%);
   border-radius: 4px;
