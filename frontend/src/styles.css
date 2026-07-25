@@ -21,6 +21,10 @@ button {
   font: inherit;
 }
 
+input {
+  font: inherit;
+}
+
 .site-shell {
   position: relative;
   isolation: isolate;
@@ -55,6 +59,15 @@ button {
   justify-content: space-between;
 }
 
+.topbar-dashboard {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+}
+
+.topbar-dashboard .wallet-control {
+  justify-self: end;
+}
+
 .wordmark {
   color: #e5faf4;
   font-family: 'DM Mono', monospace;
@@ -66,6 +79,42 @@ button {
 
 .wordmark span {
   color: #7ce5cf;
+}
+
+.dashboard-tabs {
+  display: flex;
+  padding: 3px;
+  border: 1px solid rgb(150 228 213 / 18%);
+  border-radius: 3px;
+  background: rgb(3 18 23 / 23%);
+  gap: 2px;
+}
+
+.dashboard-tab {
+  padding: 8px 11px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: rgb(169 242 223 / 62%);
+  cursor: pointer;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+}
+
+.dashboard-tab:hover {
+  color: #d9f4ed;
+}
+
+.dashboard-tab-active {
+  border-color: rgb(169 242 223 / 24%);
+  background: rgb(167 242 223 / 10%);
+  color: #d9f4ed;
+}
+
+.dashboard-tab:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
 }
 
 .wallet-button,
@@ -269,7 +318,14 @@ h1 {
 
 .action-primary:hover {
   background: #d1fff2;
+}
+
+.action:hover {
   transform: translateY(-2px);
+}
+
+.action:active {
+  transform: translateY(0);
 }
 
 .wallet-button:focus-visible,
@@ -340,6 +396,168 @@ h1 {
   height: 22rem;
 }
 
+.trader-dashboard {
+  width: min(100% - 48px, 1040px);
+  margin: 0 auto;
+  padding: 110px 0 140px;
+}
+
+.token-button:focus-visible,
+.switch-tokens:focus-visible,
+.quote-button:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
+.trader-workspace {
+  width: min(100%, 570px);
+  margin: 0 auto;
+}
+
+.swap-panel {
+  border: 1px solid rgb(150 228 213 / 21%);
+  border-radius: 4px;
+  background: rgb(3 22 28 / 48%);
+  box-shadow: 0 20px 50px rgb(0 8 11 / 13%);
+}
+
+.swap-panel {
+  position: relative;
+  padding: 22px;
+}
+
+.swap-field {
+  display: grid;
+  padding: 16px;
+  border: 1px solid rgb(150 228 213 / 16%);
+  border-radius: 3px;
+  background: rgb(2 17 22 / 42%);
+  gap: 10px;
+}
+
+.swap-field > span {
+  color: rgb(169 242 223 / 58%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.swap-field-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.swap-field input,
+.swap-field output {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #edfff9;
+  font-size: clamp(1.55rem, 3vw, 2.1rem);
+  font-weight: 600;
+  letter-spacing: -0.06em;
+}
+
+.swap-field input {
+  width: 100%;
+}
+
+.swap-field input::placeholder {
+  color: rgb(217 244 237 / 25%);
+}
+
+.quote-output {
+  color: rgb(217 244 237 / 25%) !important;
+}
+
+.token-button {
+  flex: none;
+  padding: 9px 11px;
+  border: 1px solid rgb(169 242 223 / 26%);
+  border-radius: 2px;
+  background: rgb(167 242 223 / 7%);
+  color: #d9f4ed;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.token-button:hover {
+  border-color: rgb(169 242 223 / 55%);
+  background: rgb(167 242 223 / 14%);
+}
+
+.switch-tokens {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  margin: -1px auto;
+  padding: 8px;
+  border: 1px solid rgb(169 242 223 / 38%);
+  border-radius: 50%;
+  background: #0a2d35;
+  color: #a7f2df;
+  cursor: pointer;
+  place-items: center;
+}
+
+.switch-tokens:hover {
+  background: #10414a;
+}
+
+.switch-tokens svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.quote-button {
+  width: 100%;
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: #a7f2df;
+  color: #052028;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.quote-button:hover {
+  background: #d1fff2;
+}
+
+.quote-button:disabled {
+  background: rgb(167 242 223 / 22%);
+  color: rgb(217 244 237 / 48%);
+  cursor: not-allowed;
+}
+
+.lp-dashboard {
+  width: min(100% - 48px, 1040px);
+  margin: 0 auto;
+  padding: 72px 0 96px;
+  text-align: center;
+}
+
+.lp-dashboard h1 {
+  margin: 0;
+  font-size: clamp(2.25rem, 5vw, 4.3rem);
+}
+
 @media (max-width: 640px) {
   .topbar,
   .hero {
@@ -348,6 +566,21 @@ h1 {
 
   .topbar {
     padding: 20px 0;
+  }
+
+  .topbar-dashboard {
+    grid-template-columns: 1fr auto;
+    row-gap: 16px;
+  }
+
+  .dashboard-tabs {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: stretch;
+  }
+
+  .dashboard-tab {
+    flex: 1;
   }
 
   .wallet-button {
@@ -378,6 +611,16 @@ h1 {
 
   .level-label {
     left: 16px;
+  }
+
+  .trader-dashboard {
+    width: min(100% - 32px, 1040px);
+    padding: 70px 0 90px;
+  }
+
+  .lp-dashboard {
+    width: min(100% - 32px, 1040px);
+    padding: 46px 0 58px;
   }
 
 }

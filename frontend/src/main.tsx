@@ -4,6 +4,8 @@ import './styles.css'
 
 const SEPOLIA_CHAIN_ID = '0xaa36a7'
 
+type Screen = 'home' | 'trader' | 'lp'
+
 type MetaMaskProvider = {
   isMetaMask?: boolean
   request: <Result>(args: { method: string; params?: unknown[] }) => Promise<Result>
@@ -21,7 +23,20 @@ function formatAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`
 }
 
+function screenFromPath(pathname: string): Screen {
+  if (pathname === '/trader') return 'trader'
+  if (pathname === '/lp') return 'lp'
+  return 'home'
+}
+
+function pathForScreen(screen: Screen) {
+  if (screen === 'trader') return '/trader'
+  if (screen === 'lp') return '/lp'
+  return '/'
+}
+
 function App() {
+  const [screen, setScreen] = useState<Screen>(() => screenFromPath(window.location.pathname))
   const [address, setAddress] = useState<string>()
   const [chainId, setChainId] = useState<string>()
   const [isConnecting, setIsConnecting] = useState(false)
@@ -29,6 +44,20 @@ function App() {
   const [isWalletMenuOpen, setIsWalletMenuOpen] = useState(false)
   const walletControlRef = useRef<HTMLDivElement>(null)
   const isOnSepolia = chainId?.toLowerCase() === SEPOLIA_CHAIN_ID
+
+  const navigate = (nextScreen: Screen) => {
+    const nextPath = pathForScreen(nextScreen)
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState(null, '', nextPath)
+    }
+    setScreen(nextScreen)
+  }
+
+  useEffect(() => {
+    const handlePopState = () => setScreen(screenFromPath(window.location.pathname))
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
 
   useEffect(() => {
     const provider = window.ethereum
@@ -174,13 +203,47 @@ function App() {
         ? `Sepolia · ${formatAddress(address)}`
         : 'Switch to Sepolia'
       : 'Connect MetaMask'
+  const quoteActionLabel = !address
+    ? 'Connect MetaMask'
+    : !isOnSepolia
+      ? 'Switch to Sepolia'
+      : 'Get quote'
+  const isQuoteActionDisabled = Boolean(address && isOnSepolia)
 
   return (
     <main className="site-shell">
-      <nav className="topbar" aria-label="Primary navigation">
-        <a className="wordmark" href="/" aria-label="SeaLevel home">
+      <nav className={`topbar${screen !== 'home' ? ' topbar-dashboard' : ''}`} aria-label="Primary navigation">
+        <a
+          className="wordmark"
+          href="/"
+          aria-label="SeaLevel home"
+          onClick={(event) => {
+            event.preventDefault()
+            navigate('home')
+          }}
+        >
           SEA<span>LEVEL</span>
         </a>
+        {screen !== 'home' && (
+          <div className="dashboard-tabs" aria-label="Dashboard navigation">
+            <button
+              className={`dashboard-tab${screen === 'trader' ? ' dashboard-tab-active' : ''}`}
+              type="button"
+              onClick={() => navigate('trader')}
+              aria-current={screen === 'trader' ? 'page' : undefined}
+            >
+              Trader Dashboard
+            </button>
+            <button
+              className={`dashboard-tab${screen === 'lp' ? ' dashboard-tab-active' : ''}`}
+              type="button"
+              onClick={() => navigate('lp')}
+              aria-current={screen === 'lp' ? 'page' : undefined}
+            >
+              LP Dashboard
+            </button>
+          </div>
+        )}
         <div className="wallet-control" ref={walletControlRef}>
           <button
             className={`wallet-button${address ? ' wallet-connected' : ''}${address && !isOnSepolia ? ' wallet-wrong-network' : ''}`}
@@ -212,27 +275,73 @@ function App() {
         </div>
       </nav>
 
-      <section className="hero" aria-labelledby="hero-title">
-        <p className="eyebrow">Built on 1inch Aqua <span>·</span> Powered by Plank</p>
-        <h1 id="hero-title">STABLECOIN SWAPS &amp; LIQUIDITY.</h1>
+      {screen === 'home' ? (
+        <section className="hero" aria-labelledby="hero-title">
+          <p className="eyebrow">Built on 1inch Aqua <span>·</span> Powered by Plank</p>
+          <h1 id="hero-title">STABLECOIN SWAPS &amp; LIQUIDITY.</h1>
 
-        <div className="actions">
-          <button className="action action-primary" type="button">
-            Trader Dashboard
-          </button>
-          <button className="action action-secondary" type="button">
-            LP Dashboard
-          </button>
+          <div className="actions">
+            <button className="action action-primary" type="button" onClick={() => navigate('trader')}>
+              Trader Dashboard
+            </button>
+            <button className="action action-secondary" type="button" onClick={() => navigate('lp')}>
+              LP Dashboard
+            </button>
+          </div>
+        </section>
+      ) : screen === 'trader' ? (
+        <section className="trader-dashboard" aria-label="Trader dashboard">
+          <div className="trader-workspace">
+            <section className="swap-panel" aria-label="Swap request">
+              <label className="swap-field">
+                <span>You pay</span>
+                <div className="swap-field-row">
+                  <input type="number" inputMode="decimal" min="0" placeholder="0.00" aria-label="Amount to pay" />
+                  <button className="token-button" type="button">Select token</button>
+                </div>
+              </label>
+
+              <button className="switch-tokens" type="button" aria-label="Switch selected tokens">
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M8 2v11M4 9l4 4 4-4" />
+                </svg>
+              </button>
+
+              <label className="swap-field">
+                <span>You receive</span>
+                <div className="swap-field-row">
+                  <output className="quote-output" aria-label="Quoted amount to receive">-</output>
+                  <button className="token-button" type="button">Select token</button>
+                </div>
+              </label>
+
+              <button
+                className="quote-button"
+                type="button"
+                onClick={handleWalletButtonClick}
+                disabled={isQuoteActionDisabled}
+              >
+                {quoteActionLabel}
+              </button>
+            </section>
+          </div>
+        </section>
+      ) : (
+        <section className="lp-dashboard" aria-labelledby="lp-title">
+          <p className="eyebrow">LP dashboard</p>
+          <h1 id="lp-title">LP DASHBOARD.</h1>
+        </section>
+      )}
+
+      {screen === 'home' && (
+        <div className="sea-level" aria-hidden="true">
+          <div className="level-label">SEA LEVEL</div>
+          <svg className="level-wave" viewBox="0 0 1440 48" preserveAspectRatio="none">
+            <path d="M0 27C105 11 202 12 310 26s207 15 319 0 204-14 312 1 203 15 311 0 192-14 288-4" />
+            <circle className="level-orb" cx="980" cy="32" r="4" />
+          </svg>
         </div>
-      </section>
-
-      <div className="sea-level" aria-hidden="true">
-        <div className="level-label">SEA LEVEL</div>
-        <svg className="level-wave" viewBox="0 0 1440 48" preserveAspectRatio="none">
-          <path d="M0 27C105 11 202 12 310 26s207 15 319 0 204-14 312 1 203 15 311 0 192-14 288-4" />
-          <circle className="level-orb" cx="980" cy="32" r="4" />
-        </svg>
-      </div>
+      )}
 
       <div className="depth depth-one" aria-hidden="true" />
       <div className="depth depth-two" aria-hidden="true" />
