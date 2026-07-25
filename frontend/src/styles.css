@@ -801,7 +801,7 @@ h1 {
   font-size: 1rem;
 }
 
-.position-card-heading div > span,
+.position-card-heading > div:first-child > span,
 .position-status {
   color: rgb(169 242 223 / 55%);
   font-family: 'DM Mono', monospace;
@@ -810,7 +810,7 @@ h1 {
   text-transform: uppercase;
 }
 
-.position-card-heading div > span {
+.position-card-heading > div:first-child > span {
   display: block;
   margin-top: 5px;
 }
@@ -820,6 +820,108 @@ h1 {
   border: 1px solid rgb(169 242 223 / 22%);
   border-radius: 2px;
   color: #a7f2df;
+  transition: opacity 160ms ease;
+}
+
+.position-card-action {
+  position: relative;
+  display: flex;
+  width: 54px;
+  min-height: 28px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.position-card-action .position-status,
+.dock-liquidity-button {
+  width: 54px;
+  min-height: 28px;
+}
+
+.position-card-action .position-status {
+  display: inline-flex;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.dock-liquidity-button,
+.dock-confirm-button,
+.dock-cancel-button {
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.61rem;
+  letter-spacing: 0.03em;
+}
+
+.dock-liquidity-button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0;
+  border: 1px solid #e88673;
+  background: #e88673;
+  color: #26110e;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(2px);
+  transition: opacity 160ms ease, transform 160ms ease, background-color 160ms ease;
+}
+
+.position-card:hover .dock-liquidity-button,
+.position-card:focus-within .dock-liquidity-button {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.position-card:hover .position-status,
+.position-card:focus-within .position-status {
+  opacity: 0;
+}
+
+.dock-liquidity-button:hover:not(:disabled),
+.dock-confirm-button:hover:not(:disabled) {
+  background: #f0a08d;
+}
+
+.dock-liquidity-button:disabled {
+  cursor: not-allowed;
+}
+
+.dock-confirmation {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.dock-confirm-button,
+.dock-cancel-button {
+  padding: 7px 9px;
+}
+
+.dock-confirm-button {
+  border: 1px solid #e88673;
+  background: #e88673;
+  color: #26110e;
+}
+
+.dock-cancel-button {
+  border: 1px solid rgb(169 242 223 / 28%);
+  background: transparent;
+  color: #d9f4ed;
+}
+
+.dock-cancel-button:hover:not(:disabled) {
+  border-color: rgb(169 242 223 / 62%);
+}
+
+.dock-liquidity-button:focus-visible,
+.dock-confirm-button:focus-visible,
+.dock-cancel-button:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
 }
 
 .position-token-list {
@@ -876,6 +978,23 @@ h1 {
   color: #ffe0ac;
   font-family: 'DM Mono', monospace;
   font-size: 0.67rem;
+}
+
+@media (hover: none) {
+  .position-card-action {
+    min-width: 0;
+  }
+
+  .position-card-action .position-status {
+    display: none;
+  }
+
+  .dock-liquidity-button {
+    position: static;
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
 }
 
 .liquidity-form {

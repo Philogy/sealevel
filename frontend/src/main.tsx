@@ -22,6 +22,17 @@ const aquaAbi = [
     ],
     outputs: [{ name: 'strategyHash', type: 'bytes32' }],
   },
+  {
+    type: 'function',
+    name: 'dock',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'app', type: 'address' },
+      { name: 'strategyHash', type: 'bytes32' },
+      { name: 'tokens', type: 'address[]' },
+    ],
+    outputs: [],
+  },
 ] as const
 
 type Screen = 'home' | 'trader' | 'lp' | 'addLiquidity'
@@ -41,6 +52,7 @@ type ActivePosition = {
   strategyHash: string
   feeBps: number
   group: SeaLevelToken['currency'] | 'Mixed'
+  tokenAddresses: string[]
   tokens: Array<{ token: SeaLevelToken; virtualBalance: bigint }>
 }
 
@@ -130,10 +142,12 @@ function positionsFromMaker(maker: RawMaker): ActivePosition[] {
   const tokensByAddress = new Map(sepoliaTokens.map((token) => [token.address.toLowerCase(), token]))
 
   return Object.entries(maker.accepted_strategies).map(([strategyHash, strategy]) => {
-    const tokens = Object.entries(maker.tokens).flatMap(([address, balances]) => {
+    const tokenAddresses = Object.entries(maker.tokens).flatMap(([address, balances]) =>
+      balances[strategyHash] !== undefined ? [address] : [])
+    const tokens = tokenAddresses.flatMap((address) => {
       const token = tokensByAddress.get(address.toLowerCase())
-      const rawBalance = balances[strategyHash]
-      return token && rawBalance !== undefined ? [{ token, virtualBalance: BigInt(rawBalance) }] : []
+      const rawBalance = maker.tokens[address][strategyHash]
+      return token ? [{ token, virtualBalance: BigInt(rawBalance) }] : []
     })
     const currencies = new Set(tokens.map(({ token }) => token.currency))
 
@@ -141,6 +155,7 @@ function positionsFromMaker(maker: RawMaker): ActivePosition[] {
       strategyHash,
       feeBps: Number(BigInt(strategy)),
       group: currencies.size === 1 ? tokens[0].token.currency : 'Mixed',
+      tokenAddresses,
       tokens,
     }
   })
@@ -189,6 +204,11 @@ function App() {
   const [positionAllowancesError, setPositionAllowancesError] = useState<string>()
   const [isLoadingPositions, setIsLoadingPositions] = useState(false)
   const [positionsError, setPositionsError] = useState<string>()
+  const [dockConfirmation, setDockConfirmation] = useState<string>()
+  const [dockingStrategyHash, setDockingStrategyHash] = useState<string>()
+  const [dockError, setDockError] = useState<{ strategyHash: string; message: string }>()
+  const [dockedStrategyHashes, setDockedStrategyHashes] = useState<string[]>([])
+  const [positionsRefresh, setPositionsRefresh] = useState(0)
   const [activeTokenMenu, setActiveTokenMenu] = useState<TokenField>()
   const walletControlRef = useRef<HTMLDivElement>(null)
   const tokenMenuRef = useRef<HTMLDivElement>(null)
@@ -207,6 +227,13 @@ function App() {
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
+
+  useEffect(() => {
+    setDockConfirmation(undefined)
+    setDockingStrategyHash(undefined)
+    setDockError(undefined)
+    setDockedStrategyHashes([])
+  }, [address])
 
   useEffect(() => {
     const provider = window.ethereum
@@ -331,7 +358,7 @@ function App() {
       current = false
       controller.abort()
     }
-  }, [address, isOnSepolia, screen])
+  }, [address, isOnSepolia, positionsRefresh, screen])
 
   useEffect(() => {
     const provider = window.ethereum
@@ -594,6 +621,7 @@ function App() {
   })
   const activeLiquidityTokens = liquidityTokens.filter((token) => acceptedTokenAddresses.includes(token.address))
   const allProvidedTokensApproved = isReviewingApprovals && providedTokens.every((token) => (allowances[token.address] ?? 0n) > 0n)
+  const visibleActivePositions = activePositions.filter((position) => !dockedStrategyHashes.includes(position.strategyHash))
 
   const shipLiquidity = async () => {
     const provider = window.ethereum
@@ -624,6 +652,39 @@ function App() {
       setShippingError('Unable to ship liquidity.')
     } finally {
       setIsShippingLiquidity(false)
+    }
+  }
+
+  const dockLiquidity = async (position: ActivePosition) => {
+    const provider = window.ethereum
+    if (!provider?.isMetaMask || !address || !isOnSepolia || position.tokenAddresses.length === 0) return
+
+    const data = encodeFunctionData({
+      abi: aquaAbi,
+      functionName: 'dock',
+      args: [
+        SEA_LEVEL_APP_ADDRESS,
+        position.strategyHash as `0x${string}`,
+        position.tokenAddresses as `0x${string}`[],
+      ],
+    })
+
+    setDockingStrategyHash(position.strategyHash)
+    setDockError(undefined)
+    try {
+      const transactionHash = await provider.request<string>({
+        method: 'eth_sendTransaction',
+        params: [{ from: address, to: AQUA_ROUTER_ADDRESS, data }],
+      })
+      const receipt = await waitForTransactionReceipt(provider, transactionHash)
+      if (receipt.status !== '0x1') throw new Error('Dock transaction failed.')
+      setDockedStrategyHashes((hashes) => [...hashes, position.strategyHash])
+      setDockConfirmation(undefined)
+      setPositionsRefresh((refresh) => refresh + 1)
+    } catch {
+      setDockError({ strategyHash: position.strategyHash, message: 'Unable to dock liquidity.' })
+    } finally {
+      setDockingStrategyHash(undefined)
     }
   }
 
@@ -833,7 +894,7 @@ function App() {
         <section className="lp-dashboard" aria-labelledby="liquidity-title">
           <div className="lp-page-header">
             <h1 id="liquidity-title">Active Liquidity</h1>
-            {activePositions.length > 0 && (
+            {visibleActivePositions.length > 0 && (
               <button className="add-liquidity-button" type="button" onClick={() => navigate('addLiquidity')}>
                 Add Liquidity
               </button>
@@ -849,7 +910,7 @@ function App() {
               <div className="empty-liquidity-mark" aria-hidden="true" />
               <p>{positionsError}</p>
             </div>
-          ) : activePositions.length === 0 ? (
+          ) : visibleActivePositions.length === 0 ? (
             <div className="empty-liquidity">
               <div className="empty-liquidity-mark" aria-hidden="true" />
               <p>No active liquidity</p>
@@ -857,9 +918,11 @@ function App() {
             </div>
           ) : (
             <div className="positions-list">
-              {activePositions.map((position) => {
+              {visibleActivePositions.map((position) => {
                 const providedTokens = position.tokens.filter(({ token }) => (positionAllowances[token.address] ?? 0n) > 0n)
                 const acceptedTokens = position.tokens.filter(({ token }) => (positionAllowances[token.address] ?? 0n) === 0n)
+                const isConfirmingDock = dockConfirmation === position.strategyHash
+                const isDocking = dockingStrategyHash === position.strategyHash
 
                 return (
                   <article className="position-card" key={position.strategyHash}>
@@ -868,7 +931,39 @@ function App() {
                         <h2>{position.group} liquidity</h2>
                         <span>Fee {formatTokenAmount(BigInt(position.feeBps), 2)}%</span>
                       </div>
-                      <span className="position-status">Active</span>
+                      {isConfirmingDock ? (
+                        <div className="dock-confirmation">
+                          {!isDocking && (
+                            <button
+                              className="dock-cancel-button"
+                              type="button"
+                              onClick={() => setDockConfirmation(undefined)}
+                            >
+                              Cancel
+                            </button>
+                          )}
+                          <button
+                            className="dock-confirm-button"
+                            type="button"
+                            onClick={() => void dockLiquidity(position)}
+                            disabled={isDocking}
+                          >
+                            {isDocking ? 'Docking...' : 'Confirm dock'}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="position-card-action">
+                          <span className="position-status">Active</span>
+                          <button
+                            className="dock-liquidity-button"
+                            type="button"
+                            onClick={() => setDockConfirmation(position.strategyHash)}
+                            disabled={position.tokenAddresses.length === 0}
+                          >
+                            Dock
+                          </button>
+                        </div>
+                      )}
                     </div>
                     {positionAllowancesError ? (
                       <p className="position-role-error" role="status">{positionAllowancesError}</p>
@@ -897,6 +992,9 @@ function App() {
                           </section>
                         )}
                       </div>
+                    )}
+                    {dockError?.strategyHash === position.strategyHash && (
+                      <p className="position-role-error" role="status">{dockError.message}</p>
                     )}
                   </article>
                 )
