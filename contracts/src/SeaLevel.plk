@@ -49,13 +49,43 @@ const hash_strategy = fn (fee: u16) bytes32 {
 
 const ONE_BPS = @evm_exp(10, 4);
 
+const Strategy = struct {
+    data: bytes(calldata),
+
+    fn length(self: Self) u256 {
+        self.data.length -/ 20
+    }
+
+    fn fee_rate(self: Self) u256 {
+        @evm_calldataload(self.data.ptr) >> 240
+    }
+
+    fn index_token(self: Self, i: u256) addr {
+        require(i < self.length());
+        unsafe_addr_from_u256(
+            @evm_calldataload(self.data.ptr + 2 + 20 * i) >> 96
+        )
+    }
+
+    fn hash(self: Self) bytes32 {
+        keccak256(self.data)
+    }
+};
+
+
 const swap = fn () never {
     let AQUA = aqua();
 
-    let maker     = cd_read(0, addr);
-    let token_in  = cd_read(1, addr);
-    let token_out = cd_read(2, addr);
-    let fee_rate  = cd_read(3, u16);
+    let strategy = {
+        let offset = cd_read(0, u256) + 0x04;
+        let length = @evm_calldataload(offset);
+        require(length % 20 == 2); // Ensure that `strategy` is `fee ++ (tok*)`
+        Strategy { data: bytes(calldata) { ptr: offset + 32, length: length } }
+    };
+
+    let token_in = strategy.index_token(cd_read(1, u256));
+    let token_out = strategy.index_token(cd_read(2, u256));
+    let maker = cd_read(3, addr);
     let amount_in = cd_read(4, u256);
 
     let in_decimals = decimals(token_in);
@@ -66,12 +96,12 @@ const swap = fn () never {
     } else {
         amount_in * @evm_exp(10, out_decimals.as_u256 -% in_decimals.as_u256)
     };
-    let fee = amount_out_no_fee * fee_rate.as_u256 +/ ONE_BPS;
+    let fee = amount_out_no_fee * strategy.fee_rate() +/ ONE_BPS;
     let amount_out = amount_out_no_fee - fee;
 
     require(safe_transfer_from(token_in, msg_sender(), addr_this(), amount_in));
 
-    let strategy_hash = hash_strategy(fee_rate);
+    let strategy_hash = strategy.hash();
     AQUA.push(maker, addr_this(), strategy_hash, token_in, amount_in);
     AQUA.pull(maker, strategy_hash, token_out, amount_out, msg_sender());
 
@@ -81,7 +111,7 @@ const swap = fn () never {
 run {
     let selector = @evm_calldataload(0x00) >> 224;
 
-    if selector == comptime { compute_selector("swap(address,address,address,uint16,uint256)") } {
+    if selector == comptime { compute_selector("swap(bytes,u256,u256,address,uint256)") } {
         swap();
     }
 
