@@ -559,12 +559,12 @@ function App() {
               </div>
 
               <button
-                className="quote-button"
+                className={`quote-button${quoteAmount !== undefined ? ' swap-button' : ''}`}
                 type="button"
-                onClick={requestQuote}
+                onClick={quoteAmount === undefined ? requestQuote : undefined}
                 disabled={!canRequestQuote}
               >
-                Get quote
+                {quoteAmount === undefined ? 'Get quote' : 'Swap'}
               </button>
             </section>
           </div>
@@ -573,9 +573,6 @@ function App() {
         <section className="lp-dashboard" aria-labelledby="liquidity-title">
           <div className="lp-page-header">
             <h1 id="liquidity-title">Active Liquidity</h1>
-            <button className="add-liquidity-button" type="button" onClick={() => navigate('addLiquidity')}>
-              Add Liquidity
-            </button>
           </div>
           <div className="empty-liquidity">
             <div className="empty-liquidity-mark" aria-hidden="true" />
