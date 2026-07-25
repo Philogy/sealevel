@@ -1,0 +1,92 @@
+import std::core::addr::*;
+import std::core::uint::*;
+import std::error::*;
+import std::fixedbytes::*;
+import std::abi::abi_encode;
+
+const RawBalance = struct {
+    balance: u248,
+    tokens_count: u8,
+
+    fn docked(self: Self) bool {
+        self.tokens_count.as_u256 == 0xff
+    }
+};
+
+const RAW_BALANCES_SELECTOR = 0x65f2fe14;
+const PULL_SELECTOR = 0xb00bbd10;
+const PUSH_SELECTOR = 0x47d72768;
+
+const IAqua = struct {
+    as_addr: addr,
+
+    fn raw_balances(
+        self: Self,
+        maker: addr,
+        app: addr,
+        strategy_hash: bytes32,
+        token: addr
+    ) RawBalance {
+        let encoded = abi_encode((RAW_BALANCES_SELECTOR, maker, app, strategy_hash, token));
+        let retdata = @malloc_uninit(0x40);
+
+        let success = @evm_staticcall(
+            @evm_gas(),
+            cast_addr(self.as_addr, u256),
+            encoded.ptr +% (32 - 4),
+            encoded.length -% (32 - 4),
+            retdata,
+            0x40
+        );
+        let balance = try_cast_uint(@mload32(retdata +% 0x00), u248);
+        let tokens_count = try_cast_uint(@mload32(retdata +% 0x20), u8);
+        require(success & balance.is_some & tokens_count.is_some);
+
+        RawBalance {
+            balance: balance.inner,
+            tokens_count: tokens_count.inner
+        }
+    }
+
+    fn pull(
+        self: Self,
+        maker: addr,
+        strategy_hash: bytes32,
+        token: addr,
+        amount: u256,
+        to: addr,
+    ) void {
+        let encoded = abi_encode((PULL_SELECTOR, maker, strategy_hash, token, amount, to));
+        let success = @evm_call(
+            @evm_gas(),
+            cast_addr(self.as_addr, u256),
+            0,
+            encoded.ptr +% (32 - 4),
+            encoded.length -% (32 - 4),
+            0,
+            0,
+        );
+        require(success);
+    }
+
+    fn push(
+        self: Self,
+        maker: addr,
+        app: addr,
+        strategy_hash: bytes32,
+        token: addr,
+        amount: u256,
+    ) void {
+        let encoded = abi_encode((PUSH_SELECTOR, maker, app, strategy_hash, token, amount));
+        let success = @evm_call(
+            @evm_gas(),
+            cast_addr(self.as_addr, u256),
+            0,
+            encoded.ptr +% (32 - 4),
+            encoded.length -% (32 - 4),
+            0,
+            0,
+        );
+        require(success);
+    }
+};

@@ -1,4 +1,10 @@
 {
+  "lib/aqua": {
+    "tag": {
+      "name": "v1.0.0",
+      "rev": "81c26e4619ce21556ab02b3284ee2685de21fb18"
+    }
+  },
   "lib/forge-std": {
     "tag": {
       "name": "v1.16.2",

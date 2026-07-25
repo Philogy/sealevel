@@ -1,13 +1,93 @@
-import std::constructor::return_runtime;
+import std::core::addr::*;
+import std::core::uint::*;
+import std::regions::*;
+import std::constructor::*;
+import std::fixedbytes::*;
+import std::option::*;
+import std::error::*;
+import std::abi::*;
+import std::safe_erc20::*;
+import std::calldata::unsafe_calldata_read;
+
+import sea_level::aqua::*;
 
 init {
+    let data = constructor_arg_data();
+    require(data.length == 32);
+
+    let buf = @malloc_uninit(32);
+    @evm_codecopy(buf, data.ptr, 32);
+
+    let aqua = addr_from_u256(@mload32(buf));
 
     let final_runtime_len = @runtime_length() + 32;
     let buf = @malloc_uninit(final_runtime_len);
     @evm_codecopy(buf, @runtime_start_offset(), @runtime_length());
+    @mstore32(buf +% @runtime_start_offset(), cast_addr(aqua, u256));
     @evm_return(buf, final_runtime_len);
 }
 
-run {
+const aqua = fn () IAqua {
+    let buf = @malloc_uninit(32);
+    @evm_codecopy(buf, @runtime_length(), 32);
+    IAqua { as_addr: unsafe_addr_from_u256(@mload32(buf)) }
+};
+
+const cd_read = fn (comptime arg_idx: u256, comptime T: type) T {
+    unsafe_calldata_read(T, 0x04 + arg_idx * 32)
+};
+
+const setup_token = fn () never {
+    let token = cd_read(0, addr);
+    require(safe_approve(token, aqua().as_addr, max_uint(u256)));
     @evm_stop();
+};
+
+const hash_strategy = fn (fee: u16) bytes32 {
+    keccak256(abi_encode(fee))
+};
+
+const ONE_BPS = @evm_exp(10, 4);
+
+const swap = fn () never {
+    let AQUA = aqua();
+
+    let maker     = cd_read(0, addr);
+    let token_in  = cd_read(1, addr);
+    let token_out = cd_read(2, addr);
+    let fee_rate  = cd_read(3, u16);
+    let amount_in = cd_read(4, u256);
+
+    let in_decimals = decimals(token_in);
+    let out_decimals = decimals(token_out);
+
+    let amount_out_no_fee = if in_decimals.as_u256 >= out_decimals.as_u256 {
+        amount_in -/ @evm_exp(10, in_decimals.as_u256 -% out_decimals.as_u256)
+    } else {
+        amount_in * @evm_exp(10, out_decimals.as_u256 -% in_decimals.as_u256)
+    };
+    let fee = amount_out_no_fee * fee_rate.as_u256 +/ ONE_BPS;
+    let amount_out = amount_out_no_fee - fee;
+
+    require(safe_transfer_from(token_in, msg_sender(), addr_this(), amount_in));
+
+    let strategy_hash = hash_strategy(fee_rate);
+    AQUA.push(maker, addr_this(), strategy_hash, token_in, amount_in);
+    AQUA.pull(maker, strategy_hash, token_out, amount_out, msg_sender());
+
+    @evm_stop();
+};
+
+run {
+    let selector = @evm_calldataload(0x00) >> 224;
+
+    if selector == comptime { compute_selector("swap(address,address,address,uint24,uint256)") } {
+        swap();
+    }
+
+    if selector == comptime { compute_selector("setup_token(address)") } {
+        setup_token();
+    }
+
+    @evm_revert(@malloc_uninit(0), 0);
 }
