@@ -11,7 +11,19 @@
       "rev": "bf647bd6046f2f7da30d0c2bf435e5c76a780c1b"
     }
   },
+  "lib/openzeppelin-contracts": {
+    "tag": {
+      "name": "v5.4.0",
+      "rev": "c64a1edb67b6e3f4a15cca8909c9482ad33a02b0"
+    }
+  },
   "lib/plank-foundry-deployer": {
     "rev": "24fe42f1021f956838504fcad40a90f45e8ee218"
+  },
+  "lib/solidity-utils": {
+    "tag": {
+      "name": "6.9.7",
+      "rev": "29043f22422fde454951e9733129cce5d67e6a39"
+    }
   }
 }

@@ -23,7 +23,7 @@ init {
     let final_runtime_len = @runtime_length() + 32;
     let buf = @malloc_uninit(final_runtime_len);
     @evm_codecopy(buf, @runtime_start_offset(), @runtime_length());
-    @mstore32(buf +% @runtime_start_offset(), cast_addr(aqua, u256));
+    @mstore32(buf +% @runtime_length(), cast_addr(aqua, u256));
     @evm_return(buf, final_runtime_len);
 }
 
@@ -81,7 +81,7 @@ const swap = fn () never {
 run {
     let selector = @evm_calldataload(0x00) >> 224;
 
-    if selector == comptime { compute_selector("swap(address,address,address,uint24,uint256)") } {
+    if selector == comptime { compute_selector("swap(address,address,address,uint16,uint256)") } {
         swap();
     }
 

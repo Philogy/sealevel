@@ -2,7 +2,7 @@ import std::core::addr::*;
 import std::core::uint::*;
 import std::error::*;
 import std::fixedbytes::*;
-import std::abi::abi_encode;
+import std::abi::{abi_encode, compute_selector};
 
 const RawBalance = struct {
     balance: u248,
@@ -13,9 +13,9 @@ const RawBalance = struct {
     }
 };
 
-const RAW_BALANCES_SELECTOR = 0x65f2fe14;
-const PULL_SELECTOR = 0xb00bbd10;
-const PUSH_SELECTOR = 0x47d72768;
+const RAW_BALANCES_SELECTOR = compute_selector("rawBalances(address,address,bytes32,address)");
+const PULL_SELECTOR = compute_selector("pull(address,bytes32,address,uint256,address)");
+const PUSH_SELECTOR = compute_selector("push(address,address,bytes32,address,uint256)");
 
 const IAqua = struct {
     as_addr: addr,

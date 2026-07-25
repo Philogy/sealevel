@@ -2,5 +2,13 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+ffi = true
+evm_version = "cancun"
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "@1inch/solidity-utils/=lib/solidity-utils/",
+    "aqua/=lib/aqua/",
+    "plank-foundry-deployer/=lib/plank-foundry-deployer/src/",
+]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
