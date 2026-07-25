@@ -76,6 +76,7 @@ button {
 }
 
 .wallet-button {
+  display: inline-flex;
   padding: 10px 16px;
   border-color: rgb(150 228 213 / 35%);
   border-radius: 2px;
@@ -84,6 +85,121 @@ button {
   font-family: 'DM Mono', monospace;
   font-size: 0.72rem;
   letter-spacing: 0.04em;
+  align-items: center;
+  gap: 8px;
+}
+
+.wallet-button:disabled {
+  cursor: default;
+}
+
+.wallet-connected {
+  border-color: rgb(124 229 207 / 60%);
+}
+
+.wallet-wrong-network {
+  border-color: rgb(255 196 113 / 65%);
+  color: #ffe0ac;
+}
+
+.connection-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #7ce5cf;
+  box-shadow: 0 0 8px rgb(124 229 207 / 75%);
+}
+
+.wallet-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.wallet-menu {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 10px);
+  right: 0;
+  display: grid;
+  width: min(380px, calc(100vw - 32px));
+  padding: 15px;
+  border: 1px solid rgb(150 228 213 / 30%);
+  border-radius: 3px;
+  background: rgb(4 24 30 / 96%);
+  box-shadow: 0 18px 40px rgb(0 8 11 / 32%);
+  gap: 13px;
+}
+
+.wallet-menu-account {
+  display: grid;
+  gap: 5px;
+}
+
+.wallet-menu-account span {
+  color: rgb(169 242 223 / 50%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.wallet-menu-account code {
+  color: #e5faf4;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.wallet-menu-network {
+  display: flex;
+  color: #a9cfc7;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.66rem;
+  align-items: center;
+  gap: 7px;
+}
+
+.wallet-menu-network .connection-dot {
+  width: 5px;
+  height: 5px;
+}
+
+.wallet-menu-disconnect {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid rgb(169 242 223 / 22%);
+  border-radius: 2px;
+  background: transparent;
+  color: #d9f4ed;
+  cursor: pointer;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  text-align: left;
+}
+
+.wallet-menu-disconnect:hover {
+  border-color: rgb(169 242 223 / 55%);
+  background: rgb(167 242 223 / 8%);
+}
+
+.wallet-menu-disconnect:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
+.wallet-error {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(240px, 72vw);
+  margin: 0;
+  color: #ffe0ac;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.63rem;
+  line-height: 1.45;
+  text-align: right;
 }
 
 .hero {
