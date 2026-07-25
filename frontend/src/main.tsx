@@ -1,10 +1,12 @@
 import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { sepoliaTokens, type SeaLevelToken } from './tokens'
 import './styles.css'
 
 const SEPOLIA_CHAIN_ID = '0xaa36a7'
 
 type Screen = 'home' | 'trader' | 'lp'
+type TokenField = 'pay' | 'receive'
 
 type MetaMaskProvider = {
   isMetaMask?: boolean
@@ -21,6 +23,45 @@ declare global {
 
 function formatAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`
+}
+
+function formatTokenAmount(amount: bigint, decimals: number) {
+  const divisor = 10n ** BigInt(decimals)
+  const whole = amount / divisor
+  const fraction = amount % divisor
+  const wholeText = whole.toLocaleString('en-US')
+
+  if (fraction === 0n) return wholeText
+
+  const fractionText = fraction
+    .toString()
+    .padStart(decimals, '0')
+    .slice(0, 6)
+    .replace(/0+$/, '')
+  return `${wholeText}.${fractionText}`
+}
+
+function balanceOfCallData(account: string) {
+  return `0x70a08231${account.slice(2).padStart(64, '0')}`
+}
+
+function parseTokenAmount(input: string, decimals: number) {
+  if (!/^\d*(\.\d*)?$/.test(input) || input === '' || input === '.') return
+
+  const [whole = '0', fraction = ''] = input.split('.')
+  if (fraction.length > decimals) return
+
+  const divisor = 10n ** BigInt(decimals)
+  const wholeAmount = BigInt(whole || '0') * divisor
+  const fractionAmount = BigInt((fraction || '0').padEnd(decimals, '0'))
+  return wholeAmount + fractionAmount
+}
+
+function quoteAtNinetyNinePercent(amount: bigint, inputDecimals: number, outputDecimals: number) {
+  const normalizedAmount = inputDecimals >= outputDecimals
+    ? amount / 10n ** BigInt(inputDecimals - outputDecimals)
+    : amount * 10n ** BigInt(outputDecimals - inputDecimals)
+  return normalizedAmount * 99n / 100n
 }
 
 function screenFromPath(pathname: string): Screen {
@@ -42,7 +83,14 @@ function App() {
   const [isConnecting, setIsConnecting] = useState(false)
   const [connectionError, setConnectionError] = useState<string>()
   const [isWalletMenuOpen, setIsWalletMenuOpen] = useState(false)
+  const [payToken, setPayToken] = useState<SeaLevelToken>()
+  const [receiveToken, setReceiveToken] = useState<SeaLevelToken>()
+  const [payAmount, setPayAmount] = useState('')
+  const [payBalance, setPayBalance] = useState<bigint>()
+  const [quoteAmount, setQuoteAmount] = useState<bigint>()
+  const [activeTokenMenu, setActiveTokenMenu] = useState<TokenField>()
   const walletControlRef = useRef<HTMLDivElement>(null)
+  const tokenMenuRef = useRef<HTMLDivElement>(null)
   const isOnSepolia = chainId?.toLowerCase() === SEPOLIA_CHAIN_ID
 
   const navigate = (nextScreen: Screen) => {
@@ -113,6 +161,52 @@ function App() {
       document.removeEventListener('keydown', closeOnEscape)
     }
   }, [isWalletMenuOpen])
+
+  useEffect(() => {
+    if (!activeTokenMenu) return
+
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!tokenMenuRef.current?.contains(event.target as Node)) {
+        setActiveTokenMenu(undefined)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setActiveTokenMenu(undefined)
+    }
+
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [activeTokenMenu])
+
+  useEffect(() => {
+    const provider = window.ethereum
+    if (!provider?.isMetaMask || !address || !isOnSepolia || !payToken) {
+      setPayBalance(undefined)
+      return
+    }
+
+    let current = true
+    const loadBalance = async () => {
+      try {
+        const result = await provider.request<string>({
+          method: 'eth_call',
+          params: [{ to: payToken.address, data: balanceOfCallData(address) }, 'latest'],
+        })
+        if (current) setPayBalance(BigInt(result))
+      } catch {
+        if (current) setPayBalance(undefined)
+      }
+    }
+
+    void loadBalance()
+    return () => {
+      current = false
+    }
+  }, [address, isOnSepolia, payToken])
 
   const switchToSepolia = async () => {
     const provider = window.ethereum
@@ -203,12 +297,42 @@ function App() {
         ? `Sepolia · ${formatAddress(address)}`
         : 'Switch to Sepolia'
       : 'Connect MetaMask'
-  const quoteActionLabel = !address
-    ? 'Connect MetaMask'
-    : !isOnSepolia
-      ? 'Switch to Sepolia'
-      : 'Get quote'
-  const isQuoteActionDisabled = Boolean(address && isOnSepolia)
+  const selectedToken = activeTokenMenu === 'pay' ? payToken : receiveToken
+  const otherToken = activeTokenMenu === 'pay' ? receiveToken : payToken
+  const availableTokens = otherToken
+    ? sepoliaTokens.filter((token) => token.currency === otherToken.currency && token.address !== otherToken.address)
+    : sepoliaTokens
+
+  const selectToken = (field: TokenField, token: SeaLevelToken) => {
+    if (field === 'pay') {
+      setPayToken(token)
+      setPayAmount('')
+    } else {
+      setReceiveToken(token)
+    }
+    setQuoteAmount(undefined)
+    setActiveTokenMenu(undefined)
+  }
+
+  const switchTokens = () => {
+    if (!payToken || !receiveToken) return
+    setPayToken(receiveToken)
+    setReceiveToken(payToken)
+    setPayAmount('')
+    setQuoteAmount(undefined)
+  }
+
+  const requestQuote = () => {
+    if (!payToken || !receiveToken) return
+
+    const inputAmount = parseTokenAmount(payAmount, payToken.decimals)
+    if (!inputAmount || inputAmount <= 0n) return
+
+    setQuoteAmount(quoteAtNinetyNinePercent(inputAmount, payToken.decimals, receiveToken.decimals))
+  }
+
+  const parsedPayAmount = payToken ? parseTokenAmount(payAmount, payToken.decimals) : undefined
+  const canRequestQuote = Boolean(payToken && receiveToken && parsedPayAmount && parsedPayAmount > 0n)
 
   return (
     <main className="site-shell">
@@ -293,35 +417,121 @@ function App() {
         <section className="trader-dashboard" aria-label="Trader dashboard">
           <div className="trader-workspace">
             <section className="swap-panel" aria-label="Swap request">
-              <label className="swap-field">
+              <div className="swap-field">
                 <span>You pay</span>
                 <div className="swap-field-row">
-                  <input type="number" inputMode="decimal" min="0" placeholder="0.00" aria-label="Amount to pay" />
-                  <button className="token-button" type="button">Select token</button>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    placeholder="0.00"
+                    aria-label="Amount to pay"
+                    value={payAmount}
+                    onChange={(event) => {
+                      setPayAmount(event.target.value)
+                      setQuoteAmount(undefined)
+                    }}
+                  />
+                  <div className="token-selector" ref={activeTokenMenu === 'pay' ? tokenMenuRef : undefined}>
+                    <button
+                      className="token-button"
+                      type="button"
+                      onClick={() => setActiveTokenMenu((field) => field === 'pay' ? undefined : 'pay')}
+                      aria-expanded={activeTokenMenu === 'pay'}
+                      aria-haspopup="listbox"
+                    >
+                      {payToken ? (
+                        <>
+                          <img className="token-icon" src={payToken.logo} alt="" />
+                          {payToken.symbol}
+                        </>
+                      ) : 'Select token'}
+                    </button>
+                    {activeTokenMenu === 'pay' && (
+                      <div className="token-menu" role="listbox" aria-label="Select token to pay">
+                        {availableTokens.map((token) => (
+                          <button
+                            className="token-option"
+                            key={token.address}
+                            type="button"
+                            role="option"
+                            aria-selected={selectedToken?.address === token.address}
+                            onClick={() => selectToken('pay', token)}
+                          >
+                            <img className="token-icon" src={token.logo} alt="" />
+                            <span className="token-option-symbol">{token.symbol}</span>
+                            <span className="token-option-name">{token.name}</span>
+                            <span className="token-option-currency">{token.currency}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </label>
+                {payToken && payBalance !== undefined && (
+                  <div className="balance-row">
+                    <span>Balance: {formatTokenAmount(payBalance, payToken.decimals)} {payToken.symbol}</span>
+                  </div>
+                )}
+              </div>
 
-              <button className="switch-tokens" type="button" aria-label="Switch selected tokens">
+              <button className="switch-tokens" type="button" aria-label="Switch selected tokens" onClick={switchTokens}>
                 <svg viewBox="0 0 16 16" aria-hidden="true">
                   <path d="M8 2v11M4 9l4 4 4-4" />
                 </svg>
               </button>
 
-              <label className="swap-field">
+              <div className="swap-field">
                 <span>You receive</span>
                 <div className="swap-field-row">
-                  <output className="quote-output" aria-label="Quoted amount to receive">-</output>
-                  <button className="token-button" type="button">Select token</button>
+                  <output className={`quote-output${quoteAmount !== undefined ? ' quote-output-filled' : ''}`} aria-label="Quoted amount to receive">
+                    {quoteAmount !== undefined && receiveToken ? formatTokenAmount(quoteAmount, receiveToken.decimals) : ''}
+                  </output>
+                  <div className="token-selector" ref={activeTokenMenu === 'receive' ? tokenMenuRef : undefined}>
+                    <button
+                      className="token-button"
+                      type="button"
+                      onClick={() => setActiveTokenMenu((field) => field === 'receive' ? undefined : 'receive')}
+                      aria-expanded={activeTokenMenu === 'receive'}
+                      aria-haspopup="listbox"
+                    >
+                      {receiveToken ? (
+                        <>
+                          <img className="token-icon" src={receiveToken.logo} alt="" />
+                          {receiveToken.symbol}
+                        </>
+                      ) : 'Select token'}
+                    </button>
+                    {activeTokenMenu === 'receive' && (
+                      <div className="token-menu" role="listbox" aria-label="Select token to receive">
+                        {availableTokens.map((token) => (
+                          <button
+                            className="token-option"
+                            key={token.address}
+                            type="button"
+                            role="option"
+                            aria-selected={selectedToken?.address === token.address}
+                            onClick={() => selectToken('receive', token)}
+                          >
+                            <img className="token-icon" src={token.logo} alt="" />
+                            <span className="token-option-symbol">{token.symbol}</span>
+                            <span className="token-option-name">{token.name}</span>
+                            <span className="token-option-currency">{token.currency}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </label>
+              </div>
 
               <button
                 className="quote-button"
                 type="button"
-                onClick={handleWalletButtonClick}
-                disabled={isQuoteActionDisabled}
+                onClick={requestQuote}
+                disabled={!canRequestQuote}
               >
-                {quoteActionLabel}
+                Get quote
               </button>
             </section>
           </div>
