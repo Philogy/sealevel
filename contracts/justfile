@@ -1,5 +1,5 @@
-check: 
+check:
     plank build src/SeaLevel.plk --dep sea_level=src/ > /dev/null
 
-build:
-    plank build src/SeaLevel.plk --dep sea_level=src/
+build *args:
+    plank build src/SeaLevel.plk --dep sea_level=src/ {{args}}
