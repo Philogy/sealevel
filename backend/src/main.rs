@@ -1,7 +1,10 @@
+mod trader;
+
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::ClientBuilder;
 use alloy_rpc_types_eth::{Filter, Log, TransactionInput, TransactionRequest};
+use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent, sol};
 use alloy_transport_ws::WsConnect;
 use anyhow::{Context, Result, anyhow, bail};
@@ -459,9 +462,60 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    let liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
+    let (start_trader, trade_interval_secs) =
+        match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
+            [] => (false, None),
+            [argument] if argument == "--trader" => (true, None),
+            [argument, trade_interval_secs] if argument == "--trader" => {
+                let trade_interval_secs = match trade_interval_secs.parse::<u32>() {
+                    Ok(trade_interval_secs) => trade_interval_secs,
+                    Err(error) => {
+                        error!("TRADE_INTERVAL_SECS must be a u32: {error}");
+                        std::process::exit(1);
+                    }
+                };
+                (true, Some(trade_interval_secs))
+            }
+            _ => {
+                error!("usage: sealevel-backend [--trader [TRADE_INTERVAL_SECS]]");
+                std::process::exit(1);
+            }
+        };
+    if start_trader {
+        let bot_private_key = match std::env::var("BOT_PRIVATE_KEY")
+            .context("BOT_PRIVATE_KEY must be set")
+            .and_then(|private_key| {
+                private_key
+                    .parse::<PrivateKeySigner>()
+                    .context("BOT_PRIVATE_KEY must be a valid private key")
+            }) {
+            Ok(bot_private_key) => bot_private_key,
+            Err(error) => {
+                error!("failed to load trader configuration: {error:#}");
+                std::process::exit(1);
+            }
+        };
+        let trader_liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
+        let trader = trader::Trader::new(
+            config.rpc_url.clone(),
+            bot_private_key,
+            config.chain_id,
+            config.sealevel_app_address,
+            trade_interval_secs,
+            trader_liquidity_book_receiver,
+        );
+        tokio::spawn(async move {
+            if let Err(error) = trader.run().await {
+                error!("trader stopped: {error:#}");
+            }
+        });
+        info!("trader started");
+    }
 
-    if let Err(error) = tokio::try_join!(backend.run(), run_http_server(liquidity_book_receiver)) {
+    let http_liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
+    if let Err(error) =
+        tokio::try_join!(backend.run(), run_http_server(http_liquidity_book_receiver))
+    {
         error!("backend stopped: {error:#}");
         std::process::exit(1);
     }
