@@ -37,7 +37,7 @@ const cd_read = fn (comptime arg_idx: u256, comptime T: type) T {
     unsafe_calldata_read(T, 0x04 + arg_idx * 32)
 };
 
-const setup_approval = fn () never {
+const setup_token = fn () never {
     let token = cd_read(0, addr);
     require(safe_approve(token, aqua().as_addr, max_uint(u256)));
     @evm_stop();
@@ -85,8 +85,8 @@ run {
         swap();
     }
 
-    if selector == comptime { compute_selector("setup_approval(address)") } {
-        setup_approval();
+    if selector == comptime { compute_selector("setup_token(address)") } {
+        setup_token();
     }
 
     @evm_revert(@malloc_uninit(0), 0);
