@@ -1,6 +1,6 @@
 mod trader;
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, address};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::ClientBuilder;
 use alloy_rpc_types_eth::{Filter, Log, TransactionInput, TransactionRequest};
@@ -15,6 +15,7 @@ use axum::{
     routing::get,
 };
 use log::{error, info, warn};
+use rand::seq::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::ErrorKind;
@@ -37,6 +38,22 @@ sol! {
         external
         view
         returns (uint248 balance, uint8 tokensCount);
+
+}
+
+const USDC: Address = address!("51C716e283E2844105BafBC75Ce828AfE533D2D0");
+const USDT: Address = address!("E13cEc2872Ee61dB91C0b61cca2A14d211d080F8");
+const USDS: Address = address!("FAfC6437beF175baa51728465E62E0fa8b2f9940");
+const DAI: Address = address!("308a8149F500990c8F8646AEFa779E7CEF3042a0");
+const EURC: Address = address!("E96250B9d576AAFd37ca2e3BAfD25ebf2dC02f43");
+const EURE: Address = address!("1926Dc0bBBEae374d051C68Ab127730662764B05");
+
+fn token_decimals(token: Address) -> Option<u8> {
+    match token {
+        USDC | USDT | EURC => Some(6),
+        USDS | DAI | EURE => Some(18),
+        _ => None,
+    }
 }
 
 pub struct Config {
@@ -396,9 +413,107 @@ async fn get_maker(
     }))
 }
 
+async fn get_best_quote(
+    State(liquidity_book): State<watch::Receiver<Arc<LiquidityBook>>>,
+    Path((token_in, token_out, amount_in)): Path<(String, String, String)>,
+) -> Json<serde_json::Value> {
+    let (Ok(token_in), Ok(token_out), Ok(amount_in)) = (
+        token_in.parse::<Address>(),
+        token_out.parse::<Address>(),
+        amount_in.parse::<U256>(),
+    ) else {
+        return Json(serde_json::Value::Null);
+    };
+    if token_in == token_out {
+        return Json(serde_json::Value::Null);
+    }
+    let (Some(input_decimals), Some(output_decimals)) =
+        (token_decimals(token_in), token_decimals(token_out))
+    else {
+        return Json(serde_json::Value::Null);
+    };
+    let normalized_amount_in = match (input_decimals, output_decimals) {
+        (6, 18) => {
+            let Some(normalized_amount_in) =
+                amount_in.checked_mul(U256::from(1_000_000_000_000u64))
+            else {
+                return Json(serde_json::Value::Null);
+            };
+            normalized_amount_in
+        }
+        (18, 6) => amount_in / U256::from(1_000_000_000_000u64),
+        (6, 6) | (18, 18) => amount_in,
+        _ => return Json(serde_json::Value::Null),
+    };
+
+    let liquidity_book = liquidity_book.borrow();
+    let mut best_amount_out = None;
+    let mut best_trades = Vec::new();
+    for (&maker_address, maker) in &liquidity_book.makers {
+        let Some(strategies) = maker.tokens.get(&token_out) else {
+            continue;
+        };
+        for (&strategy_hash, &output_balance) in strategies {
+            if output_balance.is_zero() {
+                continue;
+            }
+            let Some(strategy) = maker.accepted_strategies.get(&strategy_hash) else {
+                continue;
+            };
+            let data = strategy.as_ref();
+            if data.len() < 42 || (data.len() - 2) % 20 != 0 {
+                continue;
+            }
+            let fee_bps = u16::from_be_bytes([data[0], data[1]]);
+            if fee_bps >= 10_000 {
+                continue;
+            }
+            if !data[2..]
+                .chunks_exact(20)
+                .any(|token| Address::from_slice(token) == token_in)
+            {
+                continue;
+            }
+            let Some(amount_out) = normalized_amount_in
+                .checked_mul(U256::from(10_000 - fee_bps))
+                .map(|amount_out| amount_out / U256::from(10_000))
+            else {
+                continue;
+            };
+            if amount_out.is_zero() || amount_out > output_balance {
+                continue;
+            }
+
+            match best_amount_out {
+                Some(best_amount_out) if amount_out < best_amount_out => {}
+                Some(best_amount_out) if amount_out == best_amount_out => {
+                    best_trades.push((maker_address, strategy, amount_out));
+                }
+                _ => {
+                    best_amount_out = Some(amount_out);
+                    best_trades = vec![(maker_address, strategy, amount_out)];
+                }
+            }
+        }
+    }
+
+    let Some((maker, strategy, amount_out)) = best_trades.choose(&mut rand::rng()) else {
+        return Json(serde_json::Value::Null);
+    };
+    Json(serde_json::json!({
+        "maker": maker,
+        "strategy": strategy,
+        "amount_out": amount_out,
+    }))
+}
+
 async fn run_http_server(liquidity_book: watch::Receiver<Arc<LiquidityBook>>) -> Result<()> {
     let app = Router::new()
         .route("/makers/{maker}", get(get_maker))
+        .route(
+            "/quotes/{token_in}/{token_out}/{amount_in}",
+            get(get_best_quote),
+        )
         .with_state(liquidity_book);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
