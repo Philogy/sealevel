@@ -14,7 +14,12 @@ contract DeploySeaLevel is Script, PlankDeployer {
         bytes memory seaLevelInitcode = plankBuildFFI("src/SeaLevel.plk", options);
 
         vm.startBroadcast(vm.envUint("PRIV_KEY"));
-        address aqua = vm.envAddress("AQUA");
+        address aqua = vm.envOr("AQUA", address(0));
+
+        if (aqua == address(0)) {
+            aqua = address(new Aqua());
+            console.log("deployed aqua: %s", aqua);
+        }
 
         address seaLevel = _deploy(bytes.concat(seaLevelInitcode, abi.encode(aqua)), 0);
 
