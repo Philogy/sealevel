@@ -5,9 +5,17 @@ use alloy_rpc_types_eth::{Filter, Log, TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, SolEvent, sol};
 use alloy_transport_ws::WsConnect;
 use anyhow::{Context, Result, anyhow, bail};
+use axum::{
+    Router,
+    extract::{Path, State},
+    response::Json,
+    routing::get,
+};
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::ErrorKind;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 use url::Url;
@@ -33,7 +41,7 @@ pub struct Config {
     pub chain_id: u64,
     pub aqua_router_address: Address,
     pub aqua_router_creation_block: u64,
-    pub stable_amm_app_address: Address,
+    pub sealevel_app_address: Address,
 }
 
 impl Config {
@@ -55,28 +63,28 @@ impl Config {
             .context("AQUA_ROUTER_CREATION_BLOCK must be set")?
             .parse::<u64>()
             .context("AQUA_ROUTER_CREATION_BLOCK must be a u64")?;
-        let stable_amm_app_address = std::env::var("STABLE_AMM_APP_ADDRESS")
-            .context("STABLE_AMM_APP_ADDRESS must be set")?
+        let sealevel_app_address = std::env::var("SEALEVEL_APP_ADDRESS")
+            .context("SEALEVEL_APP_ADDRESS must be set")?
             .parse::<Address>()
-            .context("STABLE_AMM_APP_ADDRESS must be a valid address")?;
+            .context("SEALEVEL_APP_ADDRESS must be a valid address")?;
 
         Ok(Self {
             rpc_url,
             chain_id,
             aqua_router_address,
             aqua_router_creation_block,
-            stable_amm_app_address,
+            sealevel_app_address,
         })
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct LiquidityBook {
     pub last_processed_block: u64,
     pub makers: HashMap<Address, Maker>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Maker {
     pub accepted_strategies: HashMap<B256, Bytes>,
     pub tokens: HashMap<Address, HashMap<B256, U256>>,
@@ -107,12 +115,13 @@ pub struct Backend {
     pub http_provider: RootProvider,
     pub head_receiver: watch::Receiver<u64>,
     pub aqua_router_address: Address,
-    pub stable_amm_app_address: Address,
+    pub sealevel_app_address: Address,
     pub liquidity_book: LiquidityBook,
+    liquidity_book_sender: watch::Sender<Arc<LiquidityBook>>,
 }
 
 impl Backend {
-    pub fn new(config: Config) -> Result<Self> {
+    pub fn new(config: &Config) -> Result<Self> {
         let mut ws_url = config.rpc_url.clone();
         let scheme = match ws_url.scheme() {
             "http" => "ws",
@@ -122,7 +131,7 @@ impl Backend {
         ws_url
             .set_scheme(scheme)
             .map_err(|_| anyhow!("failed to derive WebSocket URL from RPC_URL"))?;
-        let http_provider = RootProvider::new_http(config.rpc_url);
+        let http_provider = RootProvider::new_http(config.rpc_url.clone());
         let liquidity_book = match LiquidityBook::load() {
             Ok(Some(liquidity_book)) => liquidity_book,
             Ok(None) => LiquidityBook {
@@ -130,7 +139,7 @@ impl Backend {
                 makers: HashMap::new(),
             },
             Err(error) => {
-                eprintln!("failed to load liquidity book: {error:#}");
+                warn!("failed to load liquidity book: {error:#}");
                 LiquidityBook {
                     last_processed_block: config.aqua_router_creation_block,
                     makers: HashMap::new(),
@@ -139,13 +148,15 @@ impl Backend {
         };
         let (head_sender, head_receiver) = watch::channel(liquidity_book.last_processed_block);
         tokio::spawn(listen_for_heads(ws_url, head_sender));
+        let (liquidity_book_sender, _) = watch::channel(Arc::new(liquidity_book.clone()));
 
         Ok(Self {
             http_provider,
             head_receiver,
             aqua_router_address: config.aqua_router_address,
-            stable_amm_app_address: config.stable_amm_app_address,
+            sealevel_app_address: config.sealevel_app_address,
             liquidity_book,
+            liquidity_book_sender,
         })
     }
 
@@ -165,12 +176,18 @@ impl Backend {
                 current_block = *self.head_receiver.borrow_and_update();
             }
 
+            let from_block = self.liquidity_book.last_processed_block + 1;
+            let to_block =
+                current_block.min(self.liquidity_book.last_processed_block + BLOCK_RANGE_SIZE);
+            if from_block == to_block {
+                info!("processing block {from_block}");
+            } else {
+                info!("processing blocks {from_block} through {to_block}");
+            }
             let filter = Filter::new()
                 .address(self.aqua_router_address)
-                .from_block(self.liquidity_book.last_processed_block + 1)
-                .to_block(
-                    current_block.min(self.liquidity_book.last_processed_block + BLOCK_RANGE_SIZE),
-                )
+                .from_block(from_block)
+                .to_block(to_block)
                 .event_signature(vec![
                     Shipped::SIGNATURE_HASH,
                     Docked::SIGNATURE_HASH,
@@ -183,7 +200,7 @@ impl Backend {
                     Ok(logs) => break logs,
                     Err(error) => {
                         request_errors += 1;
-                        eprintln!("error getting AquaRouter logs: {error:#}");
+                        warn!("error getting AquaRouter logs: {error:#}");
                         if request_errors == MAX_REQUEST_ERRORS {
                             return Err(error).context("too many errors getting AquaRouter logs");
                         }
@@ -197,10 +214,11 @@ impl Backend {
                 self.process_log(log).await?;
             }
 
-            self.liquidity_book.last_processed_block =
-                current_block.min(self.liquidity_book.last_processed_block + BLOCK_RANGE_SIZE);
+            self.liquidity_book.last_processed_block = to_block;
+            self.liquidity_book_sender
+                .send_replace(Arc::new(self.liquidity_book.clone()));
             if let Err(error) = self.liquidity_book.backup() {
-                eprintln!("failed to back up liquidity book: {error:#}");
+                error!("failed to back up liquidity book: {error:#}");
             }
         }
     }
@@ -217,7 +235,7 @@ impl Backend {
                     .context("failed to decode Shipped event")?
                     .inner
                     .data;
-                if event.app != self.stable_amm_app_address {
+                if event.app != self.sealevel_app_address {
                     return Ok(());
                 }
 
@@ -239,7 +257,7 @@ impl Backend {
                     .context("failed to decode Docked event")?
                     .inner
                     .data;
-                if event.app != self.stable_amm_app_address {
+                if event.app != self.sealevel_app_address {
                     return Ok(());
                 }
 
@@ -312,7 +330,7 @@ impl Backend {
                     .context("failed to decode Pulled event")?
                     .inner
                     .data;
-                if event.app != self.stable_amm_app_address {
+                if event.app != self.sealevel_app_address {
                     return Ok(());
                 }
 
@@ -334,7 +352,7 @@ impl Backend {
                     .context("failed to decode Pushed event")?
                     .inner
                     .data;
-                if event.app != self.stable_amm_app_address {
+                if event.app != self.sealevel_app_address {
                     return Ok(());
                 }
 
@@ -356,7 +374,37 @@ impl Backend {
 
         Ok(())
     }
+}
 
+async fn get_maker(
+    State(liquidity_book): State<watch::Receiver<Arc<LiquidityBook>>>,
+    Path(maker): Path<String>,
+) -> Json<serde_json::Value> {
+    let liquidity_book = liquidity_book.borrow();
+    let maker = maker
+        .parse::<Address>()
+        .ok()
+        .and_then(|maker| liquidity_book.makers.get(&maker))
+        .cloned();
+
+    Json(serde_json::json!({
+        "last_processed_block": liquidity_book.last_processed_block,
+        "maker": maker,
+    }))
+}
+
+async fn run_http_server(liquidity_book: watch::Receiver<Arc<LiquidityBook>>) -> Result<()> {
+    let app = Router::new()
+        .route("/makers/{maker}", get(get_maker))
+        .with_state(liquidity_book);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+        .await
+        .context("failed to bind HTTP server")?;
+    info!("HTTP server listening on 127.0.0.1:3000");
+    axum::serve(listener, app)
+        .await
+        .context("HTTP server stopped")?;
+    Ok(())
 }
 
 async fn listen_for_heads(ws_url: Url, head_sender: watch::Sender<u64>) {
@@ -366,14 +414,14 @@ async fn listen_for_heads(ws_url: Url, head_sender: watch::Sender<u64>) {
     {
         Ok(client) => RootProvider::new(client),
         Err(error) => {
-            eprintln!("failed to connect WebSocket provider: {error:#}");
+            error!("failed to connect WebSocket provider: {error:#}");
             return;
         }
     };
     let mut subscription = match ws_provider.subscribe_blocks().await {
         Ok(subscription) => subscription,
         Err(error) => {
-            eprintln!("failed to subscribe to new block heads: {error:#}");
+            error!("failed to subscribe to new block heads: {error:#}");
             return;
         }
     };
@@ -382,29 +430,39 @@ async fn listen_for_heads(ws_url: Url, head_sender: watch::Sender<u64>) {
         head_sender.send_replace(header.number);
     }
 
-    eprintln!("new block head subscription ended");
+    error!("new block head subscription ended");
 }
 
 #[tokio::main]
 async fn main() {
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("sealevel_backend=info,warn"),
+    )
+    .init();
+
     let config = match Config::load() {
         Ok(config) => config,
         Err(error) => {
-            eprintln!("failed to load configuration: {error:#}");
+            error!("failed to load configuration: {error:#}");
             std::process::exit(1);
         }
     };
+    info!(
+        "starting backend for chain {} with AquaRouter {} and Sealevel {}",
+        config.chain_id, config.aqua_router_address, config.sealevel_app_address
+    );
 
-    let mut backend = match Backend::new(config) {
+    let mut backend = match Backend::new(&config) {
         Ok(backend) => backend,
         Err(error) => {
-            eprintln!("failed to create backend: {error:#}");
+            error!("failed to create backend: {error:#}");
             std::process::exit(1);
         }
     };
+    let liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
 
-    if let Err(error) = backend.run().await {
-        eprintln!("backend stopped: {error:#}");
+    if let Err(error) = tokio::try_join!(backend.run(), run_http_server(liquidity_book_receiver)) {
+        error!("backend stopped: {error:#}");
         std::process::exit(1);
     }
 }
