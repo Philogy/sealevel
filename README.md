@@ -31,3 +31,13 @@ cd plankc && just link-dev-local # Builds the compiler and sets up a local insta
 cd sealevel/contracts # Go back to the sealevel/contracts sub-directory
 just build # Build the SeaLevel contracts using the `plank` compiler
 ```
+
+## Known Limitations / Bugs
+- can't ship the same token set + fee once removed (aka docked)
+- can't configure whether tokens are push-only (if you approve the aqua router
+  to spend your tokens any associated strategy will be able to pull)
+- no splits, one maker aka LP needs to fulfill your full trade, can't split
+  amongst multiple
+- no hops, the maker needs to have the pair you're looking to swap across in
+  their set, you can't use 2 separate LPs to swap A->C by doing A->B, B->C
+

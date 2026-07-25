@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useRef, useState } from 'react'
+import { StrictMode, useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { encodeFunctionData } from 'viem'
 import { sepoliaTokens, type SeaLevelToken } from './tokens'
@@ -275,6 +275,7 @@ function App() {
   const tokenMenuRef = useRef<HTMLDivElement>(null)
   const quoteRequestRef = useRef(0)
   const isOnSepolia = chainId?.toLowerCase() === SEPOLIA_CHAIN_ID
+  const hasQuote = quote !== undefined
 
   const navigate = (nextScreen: Screen) => {
     const nextPath = pathForScreen(nextScreen)
@@ -450,7 +451,7 @@ function App() {
 
   useEffect(() => {
     const provider = window.ethereum
-    if (!quote || !provider?.isMetaMask || !address || !isOnSepolia || !payToken) {
+    if (!hasQuote || !provider?.isMetaMask || !address || !isOnSepolia || !payToken) {
       setTradeAllowance(undefined)
       setIsLoadingTradeAllowance(false)
       return
@@ -476,7 +477,7 @@ function App() {
     return () => {
       current = false
     }
-  }, [address, isOnSepolia, payToken, quote])
+  }, [address, hasQuote, isOnSepolia, payToken])
 
   const switchToSepolia = async () => {
     const provider = window.ethereum
@@ -568,10 +569,9 @@ function App() {
         : 'Switch to Sepolia'
       : 'Connect MetaMask'
   const selectedToken = activeTokenMenu === 'pay' ? payToken : receiveToken
-  const otherToken = activeTokenMenu === 'pay' ? receiveToken : payToken
-  const availableTokens = otherToken
-    ? sepoliaTokens.filter((token) => token.currency === otherToken.currency && token.address !== otherToken.address)
-    : sepoliaTokens
+  const availableTokens = activeTokenMenu === 'pay' || !payToken
+    ? sepoliaTokens
+    : sepoliaTokens.filter((token) => token.currency === payToken.currency && token.address !== payToken.address)
 
   const clearQuote = () => {
     quoteRequestRef.current += 1
@@ -586,7 +586,15 @@ function App() {
 
   const selectToken = (field: TokenField, token: SeaLevelToken) => {
     if (field === 'pay') {
+      const compatibleReceiveTokens = sepoliaTokens.filter(
+        (candidate) => candidate.currency === token.currency && candidate.address !== token.address,
+      )
+      const nextReceiveToken = compatibleReceiveTokens[
+        Math.floor(Math.random() * compatibleReceiveTokens.length)
+      ]
+
       setPayToken(token)
+      setReceiveToken(nextReceiveToken)
     } else {
       setReceiveToken(token)
     }
@@ -601,7 +609,7 @@ function App() {
     clearQuote()
   }
 
-  const requestQuote = async () => {
+  const requestQuote = useCallback(async (showLoading = true) => {
     if (!payToken || !receiveToken) return
 
     const inputAmount = parseTokenAmount(payAmount, payToken.decimals)
@@ -609,13 +617,7 @@ function App() {
 
     const requestId = quoteRequestRef.current + 1
     quoteRequestRef.current = requestId
-    setIsQuoting(true)
-    setQuote(undefined)
-    setQuoteError(undefined)
-    setIsQuoteUnavailable(false)
-    setTradeAllowance(undefined)
-    setSwapError(undefined)
-    setSwapSucceeded(false)
+    if (showLoading) setIsQuoting(true)
 
     try {
       const response = await fetch(
@@ -626,6 +628,9 @@ function App() {
       if (requestId !== quoteRequestRef.current) return
 
       if (payload === null) {
+        setQuote(undefined)
+        setTradeAllowance(undefined)
+        setQuoteError(undefined)
         setIsQuoteUnavailable(true)
         return
       }
@@ -638,12 +643,40 @@ function App() {
         strategy: payload.strategy as `0x${string}`,
         amountOut: BigInt(payload.amount_out),
       })
+      setQuoteError(undefined)
+      setIsQuoteUnavailable(false)
     } catch {
-      if (requestId === quoteRequestRef.current) setQuoteError('Unable to load a quote from SeaLevel.')
+      if (requestId === quoteRequestRef.current) {
+        setQuote(undefined)
+        setTradeAllowance(undefined)
+        setIsQuoteUnavailable(false)
+        setQuoteError('Unable to load a quote from SeaLevel.')
+      }
     } finally {
-      if (requestId === quoteRequestRef.current) setIsQuoting(false)
+      if (showLoading && requestId === quoteRequestRef.current) setIsQuoting(false)
     }
-  }
+  }, [payAmount, payToken, receiveToken])
+
+  useEffect(() => {
+    if (screen !== 'trader' || !payToken || !receiveToken) return
+
+    const inputAmount = parseTokenAmount(payAmount, payToken.decimals)
+    if (!inputAmount || inputAmount <= 0n) return
+
+    let cancelled = false
+    let refreshTimer: number | undefined
+    const refreshQuote = async (showLoading: boolean) => {
+      await requestQuote(showLoading)
+      if (!cancelled) refreshTimer = window.setTimeout(() => void refreshQuote(false), 5_000)
+    }
+
+    void refreshQuote(true)
+    return () => {
+      cancelled = true
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
+      quoteRequestRef.current += 1
+    }
+  }, [payAmount, payToken, receiveToken, requestQuote, screen])
 
   const parsedPayAmount = payToken ? parseTokenAmount(payAmount, payToken.decimals) : undefined
   const canRequestQuote = Boolean(payToken && receiveToken && parsedPayAmount && parsedPayAmount > 0n)
@@ -730,10 +763,7 @@ function App() {
   }
 
   const handleTradeAction = async () => {
-    if (!quote) {
-      await requestQuote()
-      return
-    }
+    if (!quote) return
     if (!address) {
       await connectWallet()
       return
@@ -749,29 +779,29 @@ function App() {
     await swapQuote()
   }
 
-  const tradeButtonLabel = isQuoting
-    ? 'Getting quote...'
+  const tradeButtonLabel = !canRequestQuote
+    ? payToken && receiveToken ? 'Enter amount' : 'Select tokens'
     : !quote
-      ? 'Get quote'
-      : !address
-        ? 'Connect MetaMask'
-        : !isOnSepolia
-          ? 'Switch to Sepolia'
-          : isLoadingTradeAllowance
-            ? 'Checking approval...'
-            : isApprovingTrade
-              ? `Approving ${payToken?.symbol ?? 'token'}...`
-              : isSwapping
-                ? 'Swapping...'
-                : tradeAllowance === undefined
-                  ? 'Approval unavailable'
-                  : needsTradeApproval
-                    ? `Approve ${payToken?.symbol}`
-                    : 'Swap'
-  const isTradeActionDisabled = !quote
-    ? !canRequestQuote || isQuoting
-    : isQuoting || isApprovingTrade || isSwapping
-      || (Boolean(address && isOnSepolia) && (isLoadingTradeAllowance || tradeAllowance === undefined))
+      ? isQuoting && !isQuoteUnavailable && !quoteError ? 'Getting quote...' : 'Quote unavailable'
+      : isQuoting
+        ? 'Refreshing quote...'
+        : !address
+          ? 'Connect MetaMask'
+          : !isOnSepolia
+            ? 'Switch to Sepolia'
+            : isLoadingTradeAllowance
+              ? 'Checking approval...'
+              : isApprovingTrade
+                ? `Approving ${payToken?.symbol ?? 'token'}...`
+                : isSwapping
+                  ? 'Swapping...'
+                  : tradeAllowance === undefined
+                    ? 'Approval unavailable'
+                    : needsTradeApproval
+                      ? `Approve ${payToken?.symbol}`
+                      : 'Swap'
+  const isTradeActionDisabled = !quote || isQuoting || isApprovingTrade || isSwapping
+    || (Boolean(address && isOnSepolia) && (isLoadingTradeAllowance || tradeAllowance === undefined))
 
   const invalidateApprovalReview = () => {
     setIsReviewingApprovals(false)
@@ -1019,7 +1049,7 @@ function App() {
 
           <div className="actions">
             <button className="action action-primary" type="button" onClick={() => navigate('trader')}>
-              Trader Dashboard
+              Swap
             </button>
             <button className="action action-secondary" type="button" onClick={() => navigate('lp')}>
               LP Dashboard
