@@ -462,26 +462,25 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    let http_liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
-    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    let (start_trader, trade_interval_secs) = match arguments.as_slice() {
-        [] => (false, None),
-        [argument] if argument == "--trader" => (true, None),
-        [argument, trade_interval_secs] if argument == "--trader" => {
-            let trade_interval_secs = match trade_interval_secs.parse::<u32>() {
-                Ok(trade_interval_secs) => trade_interval_secs,
-                Err(error) => {
-                    error!("TRADE_INTERVAL_SECS must be a u32: {error}");
-                    std::process::exit(1);
-                }
-            };
-            (true, Some(trade_interval_secs))
-        }
-        _ => {
-            error!("usage: sealevel-backend [--trader [TRADE_INTERVAL_SECS]]");
-            std::process::exit(1);
-        }
-    };
+    let (start_trader, trade_interval_secs) =
+        match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
+            [] => (false, None),
+            [argument] if argument == "--trader" => (true, None),
+            [argument, trade_interval_secs] if argument == "--trader" => {
+                let trade_interval_secs = match trade_interval_secs.parse::<u32>() {
+                    Ok(trade_interval_secs) => trade_interval_secs,
+                    Err(error) => {
+                        error!("TRADE_INTERVAL_SECS must be a u32: {error}");
+                        std::process::exit(1);
+                    }
+                };
+                (true, Some(trade_interval_secs))
+            }
+            _ => {
+                error!("usage: sealevel-backend [--trader [TRADE_INTERVAL_SECS]]");
+                std::process::exit(1);
+            }
+        };
     if start_trader {
         let bot_private_key = match std::env::var("BOT_PRIVATE_KEY")
             .context("BOT_PRIVATE_KEY must be set")
@@ -513,6 +512,7 @@ async fn main() {
         info!("trader started");
     }
 
+    let http_liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
     if let Err(error) =
         tokio::try_join!(backend.run(), run_http_server(http_liquidity_book_receiver))
     {
