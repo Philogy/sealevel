@@ -1,13 +1,76 @@
-import std::constructor::return_runtime;
+import std::constructor::*;
+import sea_level::aqua::*;
+import std::core::addr::*;
+import std::fixedbytes::*;
+import std::option::*;
+import std::error::*;
+import std::core::uint::*;
+import std::abi::*;
+import std::safe_erc20::{safe_approve, safe_transfer_from};
+import std::calldata::unsafe_calldata_read;
 
 init {
+    let data = constructor_arg_data();
+    require(data.length == 32);
+
+    let buf = @malloc_uninit(32);
+    @evm_codecopy(buf, data.ptr, 32);
+
+    let aqua = addr_from_u256(@mload32(buf));
 
     let final_runtime_len = @runtime_length() + 32;
     let buf = @malloc_uninit(final_runtime_len);
     @evm_codecopy(buf, @runtime_start_offset(), @runtime_length());
+    @mstore32(buf +% @runtime_start_offset(), cast_addr(aqua, u256));
     @evm_return(buf, final_runtime_len);
 }
 
-run {
+const aqua = fn () IAqua {
+    let buf = @malloc_uninit(32);
+    @evm_codecopy(buf, @runtime_length(), 32);
+    IAqua { as_addr: unsafe_addr_from_u256(@mload32(buf)) }
+};
+
+const cd_read = fn (comptime arg_idx: u256, comptime T: type) T {
+    unsafe_calldata_read(0x04 + arg_idx * 32, T)
+};
+
+const setup_approval = fn () never {
+    let token = cd_read(0, addr);
+    require(safe_approve(token, aqua().as_addr, max_uint(u256)));
     @evm_stop();
+};
+
+const swap = fn () never {
+    let maker     = cd_read(0, addr);
+    let token_in  = cd_read(1, addr);
+    let token_out = cd_read(2, addr);
+    let fee       = cd_read(3, u16);
+    let amount_in = cd_read(4, u256);
+
+
+    @evm_stop();
+};
+
+run {
+    let selector = @evm_calldataload(0x00) >> 224;
+
+    if selector == comptime { compute_selector("swap(address,address,address,uint24,uint256)") } {
+        swap();
+    }
+
+    if selector == comptime { compute_selector("setup_approval(address)") } {
+        setup_approval();
+    }
+
+
+
+    // AQUA.raw_balances(
+    //     ADDR_ZERO,
+    //     ADDR_ZERO,
+    //     bytes32 { raw: 0 },
+    //     ADDR_ZERO
+    // );
+
+    @evm_revert(@malloc_uninit(0), 0);
 }
