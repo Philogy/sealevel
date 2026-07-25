@@ -111,7 +111,7 @@ const swap = fn () never {
 run {
     let selector = @evm_calldataload(0x00) >> 224;
 
-    if selector == comptime { compute_selector("swap(bytes,u256,u256,address,uint256)") } {
+    if selector == comptime { compute_selector("swap(bytes,uint256,uint256,address,uint256)") } {
         swap();
     }
 
