@@ -500,6 +500,27 @@ h1 {
   color: #a7f2df !important;
 }
 
+.quote-details,
+.quote-message {
+  margin: 9px 0 0;
+  color: rgb(169 242 223 / 58%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.61rem;
+  letter-spacing: 0.03em;
+}
+
+.quote-message-error {
+  color: #ffe0ac;
+}
+
+.quote-message-success {
+  color: #a7f2df;
+}
+
+.quote-fee {
+  color: #e88673;
+}
+
 .token-button {
   display: inline-flex;
   flex: none;

@@ -35,6 +35,22 @@ const aquaAbi = [
   },
 ] as const
 
+const seaLevelAbi = [
+  {
+    type: 'function',
+    name: 'swap',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'strategy', type: 'bytes' },
+      { name: 'tokenInIndex', type: 'uint256' },
+      { name: 'tokenOutIndex', type: 'uint256' },
+      { name: 'maker', type: 'address' },
+      { name: 'amountIn', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+] as const
+
 type Screen = 'home' | 'trader' | 'lp' | 'addLiquidity'
 type TokenField = 'pay' | 'receive'
 
@@ -54,6 +70,12 @@ type ActivePosition = {
   group: SeaLevelToken['currency'] | 'Mixed'
   tokenAddresses: string[]
   tokens: Array<{ token: SeaLevelToken; virtualBalance: bigint }>
+}
+
+type Quote = {
+  maker: `0x${string}`
+  strategy: `0x${string}`
+  amountOut: bigint
 }
 
 type MetaMaskProvider = {
@@ -114,6 +136,20 @@ async function waitForTransactionReceipt(provider: MetaMaskProvider, transaction
   throw new Error('Transaction confirmation timed out.')
 }
 
+function providerErrorMessage(error: unknown, fallback: string) {
+  if (!error || typeof error !== 'object') return fallback
+
+  const providerError = error as { code?: unknown; message?: unknown; data?: unknown }
+  if (providerError.code === 4001) return 'Transaction rejected in MetaMask.'
+
+  const nestedError = providerError.data && typeof providerError.data === 'object'
+    ? providerError.data as { message?: unknown; data?: { message?: unknown } }
+    : undefined
+  const message = nestedError?.data?.message ?? nestedError?.message ?? providerError.message
+  if (typeof message !== 'string' || message === '' || message === 'Internal JSON-RPC error.') return fallback
+  return message
+}
+
 function parseTokenAmount(input: string, decimals: number) {
   if (!/^\d*(\.\d*)?$/.test(input) || input === '' || input === '.') return
 
@@ -124,13 +160,6 @@ function parseTokenAmount(input: string, decimals: number) {
   const wholeAmount = BigInt(whole || '0') * divisor
   const fractionAmount = BigInt((fraction || '0').padEnd(decimals, '0'))
   return wholeAmount + fractionAmount
-}
-
-function quoteAtNinetyNinePercent(amount: bigint, inputDecimals: number, outputDecimals: number) {
-  const normalizedAmount = inputDecimals >= outputDecimals
-    ? amount / 10n ** BigInt(inputDecimals - outputDecimals)
-    : amount * 10n ** BigInt(outputDecimals - inputDecimals)
-  return normalizedAmount * 99n / 100n
 }
 
 function feePercentToBps(feePercent: string) {
@@ -146,6 +175,19 @@ function strategyFromFeeAndTokens(feeBps: bigint, tokens: SeaLevelToken[]) {
 
 function feeBpsFromStrategy(strategy: string) {
   return Number.parseInt(strategy.slice(2, 6), 16)
+}
+
+function tokenIndexFromStrategy(strategy: `0x${string}`, tokenAddress: string) {
+  const encodedTokens = strategy.slice(6)
+  if (encodedTokens.length === 0 || encodedTokens.length % 40 !== 0) return -1
+
+  const normalizedTokenAddress = tokenAddress.slice(2).toLowerCase()
+  for (let index = 0; index < encodedTokens.length / 40; index += 1) {
+    if (encodedTokens.slice(index * 40, (index + 1) * 40).toLowerCase() === normalizedTokenAddress) {
+      return index
+    }
+  }
+  return -1
 }
 
 function positionsFromMaker(maker: RawMaker): ActivePosition[] {
@@ -196,7 +238,16 @@ function App() {
   const [receiveToken, setReceiveToken] = useState<SeaLevelToken>()
   const [payAmount, setPayAmount] = useState('')
   const [payBalance, setPayBalance] = useState<bigint>()
-  const [quoteAmount, setQuoteAmount] = useState<bigint>()
+  const [quote, setQuote] = useState<Quote>()
+  const [isQuoting, setIsQuoting] = useState(false)
+  const [quoteError, setQuoteError] = useState<string>()
+  const [isQuoteUnavailable, setIsQuoteUnavailable] = useState(false)
+  const [tradeAllowance, setTradeAllowance] = useState<bigint>()
+  const [isLoadingTradeAllowance, setIsLoadingTradeAllowance] = useState(false)
+  const [isApprovingTrade, setIsApprovingTrade] = useState(false)
+  const [isSwapping, setIsSwapping] = useState(false)
+  const [swapError, setSwapError] = useState<string>()
+  const [swapSucceeded, setSwapSucceeded] = useState(false)
   const [liquidityCurrency, setLiquidityCurrency] = useState<SeaLevelToken['currency']>('USD')
   const [providedTokens, setProvidedTokens] = useState<SeaLevelToken[]>([])
   const [acceptedTokenAddresses, setAcceptedTokenAddresses] = useState<string[]>([])
@@ -222,6 +273,7 @@ function App() {
   const [activeTokenMenu, setActiveTokenMenu] = useState<TokenField>()
   const walletControlRef = useRef<HTMLDivElement>(null)
   const tokenMenuRef = useRef<HTMLDivElement>(null)
+  const quoteRequestRef = useRef(0)
   const isOnSepolia = chainId?.toLowerCase() === SEPOLIA_CHAIN_ID
 
   const navigate = (nextScreen: Screen) => {
@@ -396,6 +448,36 @@ function App() {
     }
   }, [address, isOnSepolia, payToken])
 
+  useEffect(() => {
+    const provider = window.ethereum
+    if (!quote || !provider?.isMetaMask || !address || !isOnSepolia || !payToken) {
+      setTradeAllowance(undefined)
+      setIsLoadingTradeAllowance(false)
+      return
+    }
+
+    let current = true
+    setIsLoadingTradeAllowance(true)
+    const loadTradeAllowance = async () => {
+      try {
+        const allowance = await provider.request<string>({
+          method: 'eth_call',
+          params: [{ to: payToken.address, data: allowanceCallData(address, SEA_LEVEL_APP_ADDRESS) }, 'latest'],
+        })
+        if (current) setTradeAllowance(BigInt(allowance))
+      } catch {
+        if (current) setSwapError('Unable to read the token approval for SeaLevel.')
+      } finally {
+        if (current) setIsLoadingTradeAllowance(false)
+      }
+    }
+
+    void loadTradeAllowance()
+    return () => {
+      current = false
+    }
+  }, [address, isOnSepolia, payToken, quote])
+
   const switchToSepolia = async () => {
     const provider = window.ethereum
     if (!provider?.isMetaMask) return
@@ -491,14 +573,24 @@ function App() {
     ? sepoliaTokens.filter((token) => token.currency === otherToken.currency && token.address !== otherToken.address)
     : sepoliaTokens
 
+  const clearQuote = () => {
+    quoteRequestRef.current += 1
+    setIsQuoting(false)
+    setQuote(undefined)
+    setQuoteError(undefined)
+    setIsQuoteUnavailable(false)
+    setTradeAllowance(undefined)
+    setSwapError(undefined)
+    setSwapSucceeded(false)
+  }
+
   const selectToken = (field: TokenField, token: SeaLevelToken) => {
     if (field === 'pay') {
       setPayToken(token)
-      setPayAmount('')
     } else {
       setReceiveToken(token)
     }
-    setQuoteAmount(undefined)
+    clearQuote()
     setActiveTokenMenu(undefined)
   }
 
@@ -506,23 +598,180 @@ function App() {
     if (!payToken || !receiveToken) return
     setPayToken(receiveToken)
     setReceiveToken(payToken)
-    setPayAmount('')
-    setQuoteAmount(undefined)
+    clearQuote()
   }
 
-  const requestQuote = () => {
+  const requestQuote = async () => {
     if (!payToken || !receiveToken) return
 
     const inputAmount = parseTokenAmount(payAmount, payToken.decimals)
     if (!inputAmount || inputAmount <= 0n) return
 
-    setQuoteAmount(quoteAtNinetyNinePercent(inputAmount, payToken.decimals, receiveToken.decimals))
+    const requestId = quoteRequestRef.current + 1
+    quoteRequestRef.current = requestId
+    setIsQuoting(true)
+    setQuote(undefined)
+    setQuoteError(undefined)
+    setIsQuoteUnavailable(false)
+    setTradeAllowance(undefined)
+    setSwapError(undefined)
+    setSwapSucceeded(false)
+
+    try {
+      const response = await fetch(
+        `/api/quotes/${encodeURIComponent(payToken.address)}/${encodeURIComponent(receiveToken.address)}/${inputAmount}`,
+      )
+      if (!response.ok) throw new Error('Quote request failed.')
+      const payload = await response.json() as { maker?: string; strategy?: string; amount_out?: string } | null
+      if (requestId !== quoteRequestRef.current) return
+
+      if (payload === null) {
+        setIsQuoteUnavailable(true)
+        return
+      }
+      if (typeof payload.maker !== 'string' || typeof payload.strategy !== 'string' || typeof payload.amount_out !== 'string') {
+        throw new Error('Invalid quote response.')
+      }
+
+      setQuote({
+        maker: payload.maker as `0x${string}`,
+        strategy: payload.strategy as `0x${string}`,
+        amountOut: BigInt(payload.amount_out),
+      })
+    } catch {
+      if (requestId === quoteRequestRef.current) setQuoteError('Unable to load a quote from SeaLevel.')
+    } finally {
+      if (requestId === quoteRequestRef.current) setIsQuoting(false)
+    }
   }
 
   const parsedPayAmount = payToken ? parseTokenAmount(payAmount, payToken.decimals) : undefined
   const canRequestQuote = Boolean(payToken && receiveToken && parsedPayAmount && parsedPayAmount > 0n)
+  const needsTradeApproval = Boolean(quote && parsedPayAmount && tradeAllowance !== undefined && tradeAllowance < parsedPayAmount)
+  const quotedFeeBps = quote ? feeBpsFromStrategy(quote.strategy) : undefined
   const liquidityTokens = sepoliaTokens.filter((token) => token.currency === liquidityCurrency)
   const hasValidFee = /^\d+(\.\d{1,2})?$/.test(feePercent) && Number(feePercent) <= 655.35
+
+  const approveTradeToken = async () => {
+    const provider = window.ethereum
+    if (!provider?.isMetaMask || !address || !isOnSepolia || !payToken) return
+
+    setIsApprovingTrade(true)
+    setSwapError(undefined)
+    try {
+      const transactionHash = await provider.request<string>({
+        method: 'eth_sendTransaction',
+        params: [{
+          from: address,
+          to: payToken.address,
+          data: approveCallData(SEA_LEVEL_APP_ADDRESS),
+        }],
+      })
+      const receipt = await waitForTransactionReceipt(provider, transactionHash)
+      if (receipt.status !== '0x1') throw new Error('Approval transaction failed.')
+      setTradeAllowance(MAX_UINT256)
+    } catch {
+      setSwapError(`Unable to approve ${payToken.symbol} for SeaLevel.`)
+    } finally {
+      setIsApprovingTrade(false)
+    }
+  }
+
+  const swapQuote = async () => {
+    const provider = window.ethereum
+    if (!provider?.isMetaMask || !address || !isOnSepolia || !payToken || !receiveToken || !quote || !parsedPayAmount) return
+
+    const tokenInIndex = tokenIndexFromStrategy(quote.strategy, payToken.address)
+    const tokenOutIndex = tokenIndexFromStrategy(quote.strategy, receiveToken.address)
+    if (tokenInIndex < 0 || tokenOutIndex < 0) {
+      setSwapError('The quote strategy does not include the selected tokens.')
+      return
+    }
+
+    const data = encodeFunctionData({
+      abi: seaLevelAbi,
+      functionName: 'swap',
+      args: [quote.strategy, BigInt(tokenInIndex), BigInt(tokenOutIndex), quote.maker, parsedPayAmount],
+    })
+
+    setIsSwapping(true)
+    setSwapError(undefined)
+    setSwapSucceeded(false)
+    const transaction = { from: address, to: SEA_LEVEL_APP_ADDRESS, data }
+    try {
+      await provider.request<string>({
+        method: 'eth_call',
+        params: [transaction, 'latest'],
+      })
+      const transactionHash = await provider.request<string>({
+        method: 'eth_sendTransaction',
+        params: [transaction],
+      })
+      const receipt = await waitForTransactionReceipt(provider, transactionHash)
+      if (receipt.status !== '0x1') {
+        try {
+          await provider.request<string>({ method: 'eth_call', params: [transaction, 'latest'] })
+          setSwapError('Swap transaction reverted without a reason.')
+        } catch (error) {
+          setSwapError(providerErrorMessage(error, 'Swap transaction reverted without a reason.'))
+        }
+        return
+      }
+      setPayBalance((balance) => balance === undefined ? undefined : balance - parsedPayAmount)
+      setPayAmount('')
+      setQuote(undefined)
+      setTradeAllowance(undefined)
+      setSwapSucceeded(true)
+    } catch (error) {
+      setSwapError(providerErrorMessage(error, 'Swap simulation reverted without a reason.'))
+    } finally {
+      setIsSwapping(false)
+    }
+  }
+
+  const handleTradeAction = async () => {
+    if (!quote) {
+      await requestQuote()
+      return
+    }
+    if (!address) {
+      await connectWallet()
+      return
+    }
+    if (!isOnSepolia) {
+      await switchToSepolia()
+      return
+    }
+    if (needsTradeApproval) {
+      await approveTradeToken()
+      return
+    }
+    await swapQuote()
+  }
+
+  const tradeButtonLabel = isQuoting
+    ? 'Getting quote...'
+    : !quote
+      ? 'Get quote'
+      : !address
+        ? 'Connect MetaMask'
+        : !isOnSepolia
+          ? 'Switch to Sepolia'
+          : isLoadingTradeAllowance
+            ? 'Checking approval...'
+            : isApprovingTrade
+              ? `Approving ${payToken?.symbol ?? 'token'}...`
+              : isSwapping
+                ? 'Swapping...'
+                : tradeAllowance === undefined
+                  ? 'Approval unavailable'
+                  : needsTradeApproval
+                    ? `Approve ${payToken?.symbol}`
+                    : 'Swap'
+  const isTradeActionDisabled = !quote
+    ? !canRequestQuote || isQuoting
+    : isQuoting || isApprovingTrade || isSwapping
+      || (Boolean(address && isOnSepolia) && (isLoadingTradeAllowance || tradeAllowance === undefined))
 
   const invalidateApprovalReview = () => {
     setIsReviewingApprovals(false)
@@ -793,7 +1042,7 @@ function App() {
                     value={payAmount}
                     onChange={(event) => {
                       setPayAmount(event.target.value)
-                      setQuoteAmount(undefined)
+                      clearQuote()
                     }}
                   />
                   <div className="token-selector" ref={activeTokenMenu === 'pay' ? tokenMenuRef : undefined}>
@@ -848,8 +1097,8 @@ function App() {
               <div className="swap-field">
                 <span>You receive</span>
                 <div className="swap-field-row">
-                  <output className={`quote-output${quoteAmount !== undefined ? ' quote-output-filled' : ''}`} aria-label="Quoted amount to receive">
-                    {quoteAmount !== undefined && receiveToken ? formatTokenAmount(quoteAmount, receiveToken.decimals) : ''}
+                  <output className={`quote-output${quote !== undefined ? ' quote-output-filled' : ''}`} aria-label="Quoted amount to receive">
+                    {quote !== undefined && receiveToken ? formatTokenAmount(quote.amountOut, receiveToken.decimals) : ''}
                   </output>
                   <div className="token-selector" ref={activeTokenMenu === 'receive' ? tokenMenuRef : undefined}>
                     <button
@@ -887,16 +1136,25 @@ function App() {
                     )}
                   </div>
                 </div>
+                {quote && quotedFeeBps !== undefined && (
+                  <div className="quote-details">
+                    <span className="quote-fee">Fee: {formatTokenAmount(BigInt(quotedFeeBps), 2)}%</span>
+                  </div>
+                )}
+                {isQuoteUnavailable && <p className="quote-message" role="status">No quote available.</p>}
+                {quoteError && <p className="quote-message quote-message-error" role="status">{quoteError}</p>}
               </div>
 
               <button
-                className={`quote-button${quoteAmount !== undefined ? ' swap-button' : ''}`}
+                className={`quote-button${quote !== undefined ? ' swap-button' : ''}`}
                 type="button"
-                onClick={quoteAmount === undefined ? requestQuote : undefined}
-                disabled={!canRequestQuote}
+                onClick={() => void handleTradeAction()}
+                disabled={isTradeActionDisabled}
               >
-                {quoteAmount === undefined ? 'Get quote' : 'Swap'}
+                {tradeButtonLabel}
               </button>
+              {swapError && <p className="quote-message quote-message-error" role="status">{swapError}</p>}
+              {swapSucceeded && <p className="quote-message quote-message-success" role="status">Swap complete.</p>}
             </section>
           </div>
         </section>
