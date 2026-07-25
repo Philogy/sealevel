@@ -1,24 +1,31 @@
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::ClientBuilder;
-use alloy_rpc_types_eth::{Filter, Log};
-use alloy_sol_types::{SolEvent, sol};
+use alloy_rpc_types_eth::{Filter, Log, TransactionInput, TransactionRequest};
+use alloy_sol_types::{SolCall, SolEvent, sol};
 use alloy_transport_ws::WsConnect;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::ErrorKind;
+use std::time::Duration;
 use tokio::sync::watch;
 use url::Url;
 
 const LIQUIDITY_BOOK_PATH: &str = "liquidity_book.json";
-const BLOCK_RANGE_SIZE: u64 = 100;
+const BLOCK_RANGE_SIZE: u64 = 10;
+const MAX_REQUEST_ERRORS: u8 = 10;
 
 sol! {
     event Shipped(address maker, address app, bytes32 strategyHash, bytes strategy);
     event Docked(address maker, address app, bytes32 strategyHash);
     event Pulled(address maker, address app, bytes32 strategyHash, address token, uint256 amount);
     event Pushed(address maker, address app, bytes32 strategyHash, address token, uint256 amount);
+
+    function rawBalances(address maker, address app, bytes32 strategyHash, address token)
+        external
+        view
+        returns (uint248 balance, uint8 tokensCount);
 }
 
 pub struct Config {
@@ -170,14 +177,24 @@ impl Backend {
                     Pulled::SIGNATURE_HASH,
                     Pushed::SIGNATURE_HASH,
                 ]);
-            let logs = self
-                .http_provider
-                .get_logs(&filter)
-                .await
-                .context("failed to get AquaRouter logs")?;
+            let mut request_errors = 0;
+            let logs = loop {
+                match self.http_provider.get_logs(&filter).await {
+                    Ok(logs) => break logs,
+                    Err(error) => {
+                        request_errors += 1;
+                        eprintln!("error getting AquaRouter logs: {error:#}");
+                        if request_errors == MAX_REQUEST_ERRORS {
+                            return Err(error).context("too many errors getting AquaRouter logs");
+                        }
+                        tokio::time::sleep(Duration::from_secs(u64::from(request_errors))).await;
+                    }
+                }
+            };
+            tokio::time::sleep(Duration::from_millis(250)).await;
 
             for log in logs {
-                self.process_log(log)?;
+                self.process_log(log).await?;
             }
 
             self.liquidity_book.last_processed_block =
@@ -188,7 +205,7 @@ impl Backend {
         }
     }
 
-    fn process_log(&mut self, log: Log) -> Result<()> {
+    async fn process_log(&mut self, log: Log) -> Result<()> {
         let Some(topic) = log.topic0() else {
             return Ok(());
         };
@@ -229,31 +246,63 @@ impl Backend {
                 let Some(maker) = self.liquidity_book.makers.get_mut(&event.maker) else {
                     return Ok(());
                 };
-                if maker
-                    .accepted_strategies
-                    .remove(&event.strategyHash)
-                    .is_none()
-                {
+                if !maker.accepted_strategies.contains_key(&event.strategyHash) {
                     return Ok(());
                 }
+                let mut tokens = std::mem::take(&mut maker.tokens);
 
-                let tokens = std::mem::take(&mut maker.tokens);
-                for (token, mut strategies) in tokens {
-                    strategies.remove(&event.strategyHash);
-
-                    if !strategies.is_empty() {
-                        maker.tokens.insert(token, strategies);
+                let block_number = log
+                    .block_number
+                    .context("Docked event is missing block number")?;
+                let mut docked_tokens = Vec::new();
+                for (&token, strategies) in &tokens {
+                    if !strategies.contains_key(&event.strategyHash) {
+                        continue;
+                    }
+                    let call = rawBalancesCall {
+                        maker: event.maker,
+                        app: event.app,
+                        strategyHash: event.strategyHash,
+                        token,
+                    };
+                    let response = self
+                        .http_provider
+                        .call(
+                            TransactionRequest::default()
+                                .to(self.aqua_router_address)
+                                .input(TransactionInput::both(call.abi_encode().into())),
+                        )
+                        .number(block_number)
+                        .await
+                        .context("failed to read AquaRouter raw balance")?;
+                    let raw = rawBalancesCall::abi_decode_returns(&response)
+                        .context("failed to decode AquaRouter raw balance")?;
+                    if raw.tokensCount == u8::MAX {
+                        docked_tokens.push(token);
                     }
                 }
 
-                if self
+                for token in docked_tokens {
+                    tokens
+                        .get_mut(&token)
+                        .expect("token was collected from maker")
+                        .remove(&event.strategyHash);
+                }
+                tokens.retain(|_, strategies| !strategies.is_empty());
+
+                let maker = self
                     .liquidity_book
                     .makers
-                    .get(&event.maker)
-                    .is_some_and(|maker| {
-                        maker.accepted_strategies.is_empty() && maker.tokens.is_empty()
-                    })
+                    .get_mut(&event.maker)
+                    .expect("maker was checked before reading raw balances");
+                if !tokens
+                    .values()
+                    .any(|strategies| strategies.contains_key(&event.strategyHash))
                 {
+                    maker.accepted_strategies.remove(&event.strategyHash);
+                }
+                maker.tokens = tokens;
+                if maker.accepted_strategies.is_empty() && maker.tokens.is_empty() {
                     self.liquidity_book.makers.remove(&event.maker);
                 }
             }
@@ -307,6 +356,7 @@ impl Backend {
 
         Ok(())
     }
+
 }
 
 async fn listen_for_heads(ws_url: Url, head_sender: watch::Sender<u64>) {
