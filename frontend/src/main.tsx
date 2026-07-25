@@ -138,6 +138,16 @@ function feePercentToBps(feePercent: string) {
   return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'))
 }
 
+function strategyFromFeeAndTokens(feeBps: bigint, tokens: SeaLevelToken[]) {
+  const fee = feeBps.toString(16).padStart(4, '0')
+  const tokenAddresses = tokens.map((token) => token.address.slice(2)).join('')
+  return `0x${fee}${tokenAddresses}` as `0x${string}`
+}
+
+function feeBpsFromStrategy(strategy: string) {
+  return Number.parseInt(strategy.slice(2, 6), 16)
+}
+
 function positionsFromMaker(maker: RawMaker): ActivePosition[] {
   const tokensByAddress = new Map(sepoliaTokens.map((token) => [token.address.toLowerCase(), token]))
 
@@ -153,7 +163,7 @@ function positionsFromMaker(maker: RawMaker): ActivePosition[] {
 
     return {
       strategyHash,
-      feeBps: Number(BigInt(strategy)),
+      feeBps: feeBpsFromStrategy(strategy),
       group: currencies.size === 1 ? tokens[0].token.currency : 'Mixed',
       tokenAddresses,
       tokens,
@@ -631,7 +641,7 @@ function App() {
       const amount = parseTokenAmount(providedAmounts[token.address] ?? '', token.decimals)
       return amount ?? 0n
     })
-    const strategy = `0x${feePercentToBps(feePercent).toString(16).padStart(64, '0')}` as `0x${string}`
+    const strategy = strategyFromFeeAndTokens(feePercentToBps(feePercent), activeLiquidityTokens)
     const data = encodeFunctionData({
       abi: aquaAbi,
       functionName: 'ship',
