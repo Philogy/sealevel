@@ -21,6 +21,10 @@ button {
   font: inherit;
 }
 
+input {
+  font: inherit;
+}
+
 .site-shell {
   position: relative;
   isolation: isolate;
@@ -55,6 +59,15 @@ button {
   justify-content: space-between;
 }
 
+.topbar-dashboard {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+}
+
+.topbar-dashboard .wallet-control {
+  justify-self: end;
+}
+
 .wordmark {
   color: #e5faf4;
   font-family: 'DM Mono', monospace;
@@ -68,6 +81,42 @@ button {
   color: #7ce5cf;
 }
 
+.dashboard-tabs {
+  display: flex;
+  padding: 3px;
+  border: 1px solid rgb(150 228 213 / 18%);
+  border-radius: 3px;
+  background: rgb(3 18 23 / 23%);
+  gap: 2px;
+}
+
+.dashboard-tab {
+  padding: 8px 11px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: rgb(169 242 223 / 62%);
+  cursor: pointer;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+}
+
+.dashboard-tab:hover {
+  color: #d9f4ed;
+}
+
+.dashboard-tab-active {
+  border-color: rgb(169 242 223 / 24%);
+  background: rgb(167 242 223 / 10%);
+  color: #d9f4ed;
+}
+
+.dashboard-tab:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
 .wallet-button,
 .action {
   border: 1px solid transparent;
@@ -76,6 +125,7 @@ button {
 }
 
 .wallet-button {
+  display: inline-flex;
   padding: 10px 16px;
   border-color: rgb(150 228 213 / 35%);
   border-radius: 2px;
@@ -84,6 +134,121 @@ button {
   font-family: 'DM Mono', monospace;
   font-size: 0.72rem;
   letter-spacing: 0.04em;
+  align-items: center;
+  gap: 8px;
+}
+
+.wallet-button:disabled {
+  cursor: default;
+}
+
+.wallet-connected {
+  border-color: rgb(124 229 207 / 60%);
+}
+
+.wallet-wrong-network {
+  border-color: rgb(255 196 113 / 65%);
+  color: #ffe0ac;
+}
+
+.connection-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #7ce5cf;
+  box-shadow: 0 0 8px rgb(124 229 207 / 75%);
+}
+
+.wallet-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.wallet-menu {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 10px);
+  right: 0;
+  display: grid;
+  width: min(380px, calc(100vw - 32px));
+  padding: 15px;
+  border: 1px solid rgb(150 228 213 / 30%);
+  border-radius: 3px;
+  background: rgb(4 24 30 / 96%);
+  box-shadow: 0 18px 40px rgb(0 8 11 / 32%);
+  gap: 13px;
+}
+
+.wallet-menu-account {
+  display: grid;
+  gap: 5px;
+}
+
+.wallet-menu-account span {
+  color: rgb(169 242 223 / 50%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.wallet-menu-account code {
+  color: #e5faf4;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.wallet-menu-network {
+  display: flex;
+  color: #a9cfc7;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.66rem;
+  align-items: center;
+  gap: 7px;
+}
+
+.wallet-menu-network .connection-dot {
+  width: 5px;
+  height: 5px;
+}
+
+.wallet-menu-disconnect {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid rgb(169 242 223 / 22%);
+  border-radius: 2px;
+  background: transparent;
+  color: #d9f4ed;
+  cursor: pointer;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  text-align: left;
+}
+
+.wallet-menu-disconnect:hover {
+  border-color: rgb(169 242 223 / 55%);
+  background: rgb(167 242 223 / 8%);
+}
+
+.wallet-menu-disconnect:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
+.wallet-error {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(240px, 72vw);
+  margin: 0;
+  color: #ffe0ac;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.63rem;
+  line-height: 1.45;
+  text-align: right;
 }
 
 .hero {
@@ -153,7 +318,14 @@ h1 {
 
 .action-primary:hover {
   background: #d1fff2;
+}
+
+.action:hover {
   transform: translateY(-2px);
+}
+
+.action:active {
+  transform: translateY(0);
 }
 
 .wallet-button:focus-visible,
@@ -224,6 +396,1022 @@ h1 {
   height: 22rem;
 }
 
+.trader-dashboard {
+  width: min(100% - 48px, 1040px);
+  margin: 0 auto;
+  padding: 110px 0 140px;
+}
+
+.token-button:focus-visible,
+.switch-tokens:focus-visible,
+.quote-button:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
+.trader-workspace {
+  width: min(100%, 570px);
+  margin: 0 auto;
+}
+
+.swap-panel {
+  border: 1px solid rgb(150 228 213 / 21%);
+  border-radius: 4px;
+  background: rgb(3 22 28 / 48%);
+  box-shadow: 0 20px 50px rgb(0 8 11 / 13%);
+}
+
+.swap-panel {
+  position: relative;
+  padding: 22px;
+}
+
+.swap-field {
+  display: grid;
+  padding: 16px;
+  border: 1px solid rgb(150 228 213 / 16%);
+  border-radius: 3px;
+  background: rgb(2 17 22 / 42%);
+  gap: 10px;
+}
+
+.swap-field > span {
+  color: rgb(169 242 223 / 58%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.swap-field-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.swap-field input,
+.swap-field output {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #edfff9;
+  font-size: clamp(1.55rem, 3vw, 2.1rem);
+  font-weight: 600;
+  letter-spacing: -0.06em;
+}
+
+.swap-field input,
+.swap-field output {
+  width: 100%;
+}
+
+.swap-field input {
+  appearance: textfield;
+  color: #a7f2df;
+}
+
+.swap-field input::-webkit-inner-spin-button,
+.swap-field input::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.swap-field input::placeholder {
+  color: rgb(217 244 237 / 25%);
+}
+
+.balance-row {
+  display: flex;
+  color: rgb(169 242 223 / 54%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.6rem;
+  justify-content: space-between;
+  letter-spacing: 0.02em;
+}
+
+.quote-output {
+  color: rgb(217 244 237 / 25%) !important;
+}
+
+.quote-output-filled {
+  color: #a7f2df !important;
+}
+
+.quote-details,
+.quote-message {
+  margin: 9px 0 0;
+  color: rgb(169 242 223 / 58%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.61rem;
+  letter-spacing: 0.03em;
+}
+
+.quote-message-error {
+  color: #ffe0ac;
+}
+
+.quote-message-success {
+  color: #a7f2df;
+}
+
+.quote-fee {
+  color: #e88673;
+}
+
+.token-button {
+  display: inline-flex;
+  flex: none;
+  padding: 9px 11px;
+  border: 1px solid rgb(169 242 223 / 26%);
+  border-radius: 2px;
+  background: rgb(167 242 223 / 7%);
+  color: #d9f4ed;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.token-button::after {
+  width: 5px;
+  height: 5px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  content: '';
+  transform: rotate(45deg) translateY(-2px);
+}
+
+.token-button:hover {
+  border-color: rgb(169 242 223 / 55%);
+  background: rgb(167 242 223 / 14%);
+}
+
+.token-selector {
+  position: relative;
+  flex: none;
+}
+
+.token-menu {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  width: min(300px, calc(100vw - 76px));
+  overflow: hidden;
+  padding: 5px;
+  border: 1px solid rgb(150 228 213 / 30%);
+  border-radius: 3px;
+  background: rgb(4 24 30 / 98%);
+  box-shadow: 0 18px 40px rgb(0 8 11 / 40%);
+  transform-origin: top right;
+}
+
+.token-option {
+  display: grid;
+  width: 100%;
+  padding: 11px 10px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: #d9f4ed;
+  cursor: pointer;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  text-align: left;
+}
+
+.token-option:hover,
+.token-option[aria-selected='true'] {
+  border-color: rgb(169 242 223 / 20%);
+  background: rgb(167 242 223 / 9%);
+}
+
+.token-option-symbol {
+  color: #e5faf4;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.71rem;
+  font-weight: 500;
+}
+
+.token-icon {
+  display: inline-block;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  object-fit: contain;
+}
+
+.token-option-name {
+  overflow: hidden;
+  color: rgb(217 244 237 / 63%);
+  font-size: 0.71rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-option-currency {
+  color: rgb(169 242 223 / 52%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+}
+
+.token-option:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: -3px;
+}
+
+.switch-tokens {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  margin: -1px auto;
+  padding: 8px;
+  border: 1px solid rgb(169 242 223 / 38%);
+  border-radius: 50%;
+  background: #0a2d35;
+  color: #a7f2df;
+  cursor: pointer;
+  place-items: center;
+}
+
+.switch-tokens:hover {
+  background: #10414a;
+}
+
+.switch-tokens svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.quote-button {
+  width: 100%;
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: #a7f2df;
+  color: #052028;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.quote-button:hover {
+  background: #d1fff2;
+}
+
+.swap-button {
+  background: #e88673;
+  color: #26110e;
+}
+
+.swap-button:hover {
+  background: #f0a08d;
+}
+
+.quote-button:disabled {
+  background: rgb(167 242 223 / 22%);
+  color: rgb(217 244 237 / 48%);
+  cursor: not-allowed;
+}
+
+.lp-dashboard,
+.add-liquidity {
+  width: min(100% - 48px, 1040px);
+  margin: 0 auto;
+  padding: 72px 0 96px;
+}
+
+.lp-page-header {
+  display: flex;
+  margin-bottom: 34px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lp-page-header h1 {
+  margin: 0;
+  color: #a7f2df;
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  letter-spacing: -0.07em;
+}
+
+.add-liquidity-button,
+.review-liquidity-button {
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: #a7f2df;
+  color: #052028;
+  cursor: pointer;
+  font-size: 0.77rem;
+  font-weight: 800;
+}
+
+.add-liquidity-button {
+  padding: 13px 16px;
+  background: #e88673;
+  color: #26110e;
+}
+
+.add-liquidity-button:hover {
+  background: #f0a08d;
+}
+
+.review-liquidity-button:hover:not(:disabled) {
+  background: #d1fff2;
+}
+
+.add-liquidity-button:focus-visible,
+.review-liquidity-button:focus-visible,
+.liquidity-group-button:focus-visible,
+.liquidity-token-row button:focus-visible,
+.accept-token-row:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
+.empty-liquidity {
+  display: grid;
+  min-height: 340px;
+  border: 1px solid rgb(150 228 213 / 22%);
+  border-radius: 4px;
+  background:
+    radial-gradient(circle at 50% 55%, rgb(33 120 119 / 16%), transparent 13rem),
+    rgb(3 22 28 / 48%);
+  color: #a9cfc7;
+  place-content: center;
+  text-align: center;
+}
+
+.empty-liquidity-mark {
+  width: 96px;
+  height: 32px;
+  margin: 0 auto 20px;
+  border-top: 1px solid rgb(167 242 223 / 85%);
+  border-radius: 50%;
+  box-shadow: 0 -11px 0 -10px rgb(167 242 223 / 58%), 0 11px 0 -10px rgb(167 242 223 / 42%), 0 0 18px rgb(124 229 207 / 32%);
+}
+
+.empty-liquidity p {
+  margin: 0;
+  color: #d9f4ed;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.empty-liquidity button {
+  margin-top: 22px;
+  padding: 12px 15px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: #e88673;
+  color: #26110e;
+  cursor: pointer;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.empty-liquidity button:hover {
+  background: #f0a08d;
+}
+
+.empty-liquidity button:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
+.positions-list {
+  display: grid;
+  gap: 12px;
+}
+
+.position-card {
+  overflow: hidden;
+  border: 1px solid rgb(150 228 213 / 21%);
+  border-radius: 4px;
+  background: rgb(3 22 28 / 48%);
+  box-shadow: 0 20px 50px rgb(0 8 11 / 13%);
+}
+
+.position-card-heading {
+  display: flex;
+  padding: 20px 22px;
+  border-bottom: 1px solid rgb(150 228 213 / 14%);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.position-card-heading h2 {
+  margin: 0;
+  color: #e5faf4;
+  font-size: 1rem;
+}
+
+.position-card-heading > div:first-child > span,
+.position-status {
+  color: rgb(169 242 223 / 55%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.61rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.position-card-heading > div:first-child > span {
+  display: block;
+  margin-top: 5px;
+}
+
+.position-status {
+  padding: 6px 8px;
+  border: 1px solid rgb(169 242 223 / 22%);
+  border-radius: 2px;
+  color: #a7f2df;
+  transition: opacity 160ms ease;
+}
+
+.position-card-action {
+  position: relative;
+  display: flex;
+  width: 54px;
+  min-height: 28px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.position-card-action .position-status,
+.dock-liquidity-button {
+  width: 54px;
+  min-height: 28px;
+}
+
+.position-card-action .position-status {
+  display: inline-flex;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.dock-liquidity-button,
+.dock-confirm-button,
+.dock-cancel-button {
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.61rem;
+  letter-spacing: 0.03em;
+}
+
+.dock-liquidity-button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0;
+  border: 1px solid #e88673;
+  background: #e88673;
+  color: #26110e;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(2px);
+  transition: opacity 160ms ease, transform 160ms ease, background-color 160ms ease;
+}
+
+.position-card:hover .dock-liquidity-button,
+.position-card:focus-within .dock-liquidity-button {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.position-card:hover .position-status,
+.position-card:focus-within .position-status {
+  opacity: 0;
+}
+
+.dock-liquidity-button:hover:not(:disabled),
+.dock-confirm-button:hover:not(:disabled) {
+  background: #f0a08d;
+}
+
+.dock-liquidity-button:disabled {
+  cursor: not-allowed;
+}
+
+.dock-confirmation {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.dock-confirm-button,
+.dock-cancel-button {
+  padding: 7px 9px;
+}
+
+.dock-confirm-button {
+  border: 1px solid #e88673;
+  background: #e88673;
+  color: #26110e;
+}
+
+.dock-cancel-button {
+  border: 1px solid rgb(169 242 223 / 28%);
+  background: transparent;
+  color: #d9f4ed;
+}
+
+.dock-cancel-button:hover:not(:disabled) {
+  border-color: rgb(169 242 223 / 62%);
+}
+
+.dock-liquidity-button:focus-visible,
+.dock-confirm-button:focus-visible,
+.dock-cancel-button:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
+.position-token-list {
+  display: grid;
+  padding: 9px 12px;
+}
+
+.position-token-group + .position-token-group {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgb(150 228 213 / 14%);
+}
+
+.position-token-group h3 {
+  margin: 4px 10px 8px;
+  color: rgb(169 242 223 / 55%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.58rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.position-token-row {
+  display: grid;
+  min-height: 46px;
+  padding: 8px 10px;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  column-gap: 10px;
+}
+
+.position-token-row + .position-token-row {
+  border-top: 1px solid rgb(150 228 213 / 10%);
+}
+
+.position-token-row > span {
+  color: #d9f4ed;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.position-token-row strong {
+  color: #a7f2df;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.position-role-error {
+  margin: 0;
+  padding: 18px 22px;
+  color: #ffe0ac;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.67rem;
+}
+
+@media (hover: none) {
+  .position-card-action {
+    min-width: 0;
+  }
+
+  .position-card-action .position-status {
+    display: none;
+  }
+
+  .dock-liquidity-button {
+    position: static;
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+}
+
+.liquidity-form {
+  border: 1px solid rgb(150 228 213 / 21%);
+  border-radius: 4px;
+  background: rgb(3 22 28 / 48%);
+  box-shadow: 0 20px 50px rgb(0 8 11 / 13%);
+}
+
+.liquidity-group {
+  display: flex;
+  padding: 21px 22px;
+  border-bottom: 1px solid rgb(150 228 213 / 14%);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.liquidity-group > span,
+.liquidity-list-heading span,
+.liquidity-fee label > span {
+  color: rgb(169 242 223 / 55%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.liquidity-group-options {
+  display: flex;
+  width: 122px;
+  padding: 3px;
+  border: 1px solid rgb(150 228 213 / 18%);
+  border-radius: 3px;
+  background: rgb(2 17 22 / 42%);
+  gap: 2px;
+}
+
+.liquidity-group-button {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 11px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: rgb(169 242 223 / 62%);
+  cursor: pointer;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.64rem;
+}
+
+.liquidity-group-button-active {
+  border-color: rgb(169 242 223 / 24%);
+  background: rgb(167 242 223 / 10%);
+  color: #d9f4ed;
+}
+
+.liquidity-fee {
+  padding: 18px 22px;
+  border-bottom: 1px solid rgb(150 228 213 / 14%);
+}
+
+.liquidity-fee label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.liquidity-fee label > div {
+  display: flex;
+  width: 122px;
+  border: 1px solid rgb(169 242 223 / 23%);
+  border-radius: 2px;
+  background: rgb(2 17 22 / 42%);
+  align-items: center;
+}
+
+.liquidity-fee input {
+  width: 100%;
+  padding: 9px 0 9px 10px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #a7f2df;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.72rem;
+  text-align: right;
+}
+
+.liquidity-fee input::placeholder {
+  color: rgb(217 244 237 / 28%);
+}
+
+.liquidity-fee label > div > span {
+  padding: 0 10px;
+  color: rgb(169 242 223 / 54%);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.61rem;
+}
+
+.liquidity-fee input:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
+.liquidity-lists {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.liquidity-list {
+  padding: 22px;
+}
+
+.liquidity-list + .liquidity-list {
+  border-left: 1px solid rgb(150 228 213 / 14%);
+}
+
+.liquidity-list-heading {
+  display: grid;
+  min-height: 38px;
+  margin-bottom: 14px;
+  gap: 5px;
+}
+
+.liquidity-list-heading h2 {
+  margin: 0;
+  color: #e5faf4;
+  font-size: 0.92rem;
+}
+
+.liquidity-list-heading span {
+  font-size: 0.55rem;
+}
+
+.liquidity-token-row {
+  display: grid;
+  min-height: 48px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  grid-template-columns: minmax(0, 1fr) 105px;
+  align-items: center;
+}
+
+.liquidity-token-row-active {
+  margin: 4px 0;
+  padding: 7px;
+  border-color: rgb(169 242 223 / 18%);
+  background: rgb(167 242 223 / 6%);
+}
+
+.liquidity-token-row > button {
+  display: grid;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: #d9f4ed;
+  cursor: pointer;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 9px;
+  text-align: left;
+}
+
+.liquidity-token-row > button span,
+.accept-token-row > span:not(.accept-indicator) {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.liquidity-token-row > button small {
+  overflow: hidden;
+  color: rgb(169 242 223 / 52%);
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.liquidity-token-row > input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid rgb(169 242 223 / 23%);
+  border-radius: 2px;
+  outline: 0;
+  background: rgb(2 17 22 / 42%);
+  color: #a7f2df;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.72rem;
+  text-align: right;
+}
+
+.liquidity-token-row > input::placeholder {
+  color: rgb(217 244 237 / 26%);
+}
+
+.accept-token-row {
+  display: grid;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: #d9f4ed;
+  cursor: pointer;
+  grid-template-columns: auto auto auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 9px;
+  text-align: left;
+}
+
+.accept-token-row:hover:not(:disabled),
+.accept-token-row-active {
+  border-color: rgb(169 242 223 / 18%);
+  background: rgb(167 242 223 / 6%);
+}
+
+.accept-token-row:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.accept-token-row small {
+  overflow: hidden;
+  color: rgb(169 242 223 / 48%);
+  font-size: 0.61rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accept-indicator {
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgb(169 242 223 / 34%);
+  border-radius: 2px;
+}
+
+.accept-token-row-active .accept-indicator {
+  border-color: #a7f2df;
+  background: #a7f2df;
+  box-shadow: inset 0 0 0 3px #0a2d35;
+}
+
+.review-liquidity-button {
+  width: calc(100% - 44px);
+  margin: 0 22px 22px;
+  padding: 14px;
+}
+
+.review-liquidity-button:disabled {
+  background: rgb(167 242 223 / 22%);
+  color: rgb(217 244 237 / 48%);
+  cursor: not-allowed;
+}
+
+.approval-review {
+  margin-top: 4px;
+  padding: 22px;
+  border-top: 1px solid rgb(150 228 213 / 14%);
+  background: rgb(2 17 22 / 24%);
+}
+
+.approval-review-heading {
+  display: flex;
+  margin-bottom: 13px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.approval-review-heading h2 {
+  margin: 0;
+  color: #e5faf4;
+  font-size: 0.92rem;
+}
+
+.approval-token-row {
+  display: grid;
+  min-height: 48px;
+  padding: 8px;
+  border: 1px solid rgb(150 228 213 / 14%);
+  border-radius: 3px;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 9px;
+}
+
+.approval-token-row + .approval-token-row {
+  margin-top: 6px;
+}
+
+.approval-token-row > span {
+  color: #e5faf4;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.approval-token-row small {
+  overflow: hidden;
+  color: rgb(169 242 223 / 58%);
+  font-size: 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-token-row > button {
+  padding: 8px 10px;
+  border: 1px solid rgb(232 134 115 / 62%);
+  border-radius: 2px;
+  background: transparent;
+  color: #f0a08d;
+  cursor: pointer;
+  font-size: 0.67rem;
+  font-weight: 800;
+}
+
+.approval-token-row > button:hover:not(:disabled) {
+  background: rgb(232 134 115 / 12%);
+}
+
+.approval-token-row > button:disabled {
+  border-color: rgb(169 242 223 / 20%);
+  color: rgb(169 242 223 / 58%);
+  cursor: default;
+}
+
+.approval-token-row > button:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
+.approval-error {
+  margin: 12px 0 0;
+  color: #f0a08d;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.65rem;
+}
+
+.ship-liquidity-button {
+  width: 100%;
+  margin-top: 14px;
+  padding: 13px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: #e88673;
+  color: #26110e;
+  cursor: pointer;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.ship-liquidity-button:hover:not(:disabled) {
+  background: #f0a08d;
+}
+
+.ship-liquidity-button:disabled {
+  background: rgb(232 134 115 / 46%);
+  color: rgb(38 17 14 / 72%);
+  cursor: default;
+}
+
+.ship-liquidity-button:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
+.shipping-success {
+  display: flex;
+  margin-top: 14px;
+  padding: 13px;
+  border: 1px solid rgb(169 242 223 / 24%);
+  border-radius: 2px;
+  background: rgb(167 242 223 / 8%);
+  color: #a7f2df;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.67rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.shipping-success button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #d1fff2;
+  cursor: pointer;
+  font: inherit;
+}
+
+.shipping-success button:focus-visible {
+  outline: 2px solid #d1fff2;
+  outline-offset: 3px;
+}
+
 @media (max-width: 640px) {
   .topbar,
   .hero {
@@ -232,6 +1420,21 @@ h1 {
 
   .topbar {
     padding: 20px 0;
+  }
+
+  .topbar-dashboard {
+    grid-template-columns: 1fr auto;
+    row-gap: 16px;
+  }
+
+  .dashboard-tabs {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: stretch;
+  }
+
+  .dashboard-tab {
+    flex: 1;
   }
 
   .wallet-button {
@@ -262,6 +1465,47 @@ h1 {
 
   .level-label {
     left: 16px;
+  }
+
+  .trader-dashboard {
+    width: min(100% - 32px, 1040px);
+    padding: 70px 0 90px;
+  }
+
+  .lp-dashboard {
+    width: min(100% - 32px, 1040px);
+    padding: 46px 0 58px;
+  }
+
+  .add-liquidity {
+    width: min(100% - 32px, 1040px);
+    padding: 46px 0 58px;
+  }
+
+  .lp-page-header {
+    margin-bottom: 24px;
+  }
+
+  .liquidity-group {
+    padding: 17px;
+  }
+
+  .liquidity-lists {
+    grid-template-columns: 1fr;
+  }
+
+  .liquidity-list {
+    padding: 18px;
+  }
+
+  .liquidity-list + .liquidity-list {
+    border-top: 1px solid rgb(150 228 213 / 14%);
+    border-left: 0;
+  }
+
+  .review-liquidity-button {
+    width: calc(100% - 36px);
+    margin: 0 18px 18px;
   }
 
 }
