@@ -11,6 +11,7 @@ use axum::{
     response::Json,
     routing::get,
 };
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::ErrorKind;
@@ -138,7 +139,7 @@ impl Backend {
                 makers: HashMap::new(),
             },
             Err(error) => {
-                eprintln!("failed to load liquidity book: {error:#}");
+                warn!("failed to load liquidity book: {error:#}");
                 LiquidityBook {
                     last_processed_block: config.aqua_router_creation_block,
                     makers: HashMap::new(),
@@ -175,12 +176,18 @@ impl Backend {
                 current_block = *self.head_receiver.borrow_and_update();
             }
 
+            let from_block = self.liquidity_book.last_processed_block + 1;
+            let to_block =
+                current_block.min(self.liquidity_book.last_processed_block + BLOCK_RANGE_SIZE);
+            if from_block == to_block {
+                info!("processing block {from_block}");
+            } else {
+                info!("processing blocks {from_block} through {to_block}");
+            }
             let filter = Filter::new()
                 .address(self.aqua_router_address)
-                .from_block(self.liquidity_book.last_processed_block + 1)
-                .to_block(
-                    current_block.min(self.liquidity_book.last_processed_block + BLOCK_RANGE_SIZE),
-                )
+                .from_block(from_block)
+                .to_block(to_block)
                 .event_signature(vec![
                     Shipped::SIGNATURE_HASH,
                     Docked::SIGNATURE_HASH,
@@ -193,7 +200,7 @@ impl Backend {
                     Ok(logs) => break logs,
                     Err(error) => {
                         request_errors += 1;
-                        eprintln!("error getting AquaRouter logs: {error:#}");
+                        warn!("error getting AquaRouter logs: {error:#}");
                         if request_errors == MAX_REQUEST_ERRORS {
                             return Err(error).context("too many errors getting AquaRouter logs");
                         }
@@ -207,12 +214,11 @@ impl Backend {
                 self.process_log(log).await?;
             }
 
-            self.liquidity_book.last_processed_block =
-                current_block.min(self.liquidity_book.last_processed_block + BLOCK_RANGE_SIZE);
+            self.liquidity_book.last_processed_block = to_block;
             self.liquidity_book_sender
                 .send_replace(Arc::new(self.liquidity_book.clone()));
             if let Err(error) = self.liquidity_book.backup() {
-                eprintln!("failed to back up liquidity book: {error:#}");
+                error!("failed to back up liquidity book: {error:#}");
             }
         }
     }
@@ -394,6 +400,7 @@ async fn run_http_server(liquidity_book: watch::Receiver<Arc<LiquidityBook>>) ->
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
         .context("failed to bind HTTP server")?;
+    info!("HTTP server listening on 127.0.0.1:3000");
     axum::serve(listener, app)
         .await
         .context("HTTP server stopped")?;
@@ -407,14 +414,14 @@ async fn listen_for_heads(ws_url: Url, head_sender: watch::Sender<u64>) {
     {
         Ok(client) => RootProvider::new(client),
         Err(error) => {
-            eprintln!("failed to connect WebSocket provider: {error:#}");
+            error!("failed to connect WebSocket provider: {error:#}");
             return;
         }
     };
     let mut subscription = match ws_provider.subscribe_blocks().await {
         Ok(subscription) => subscription,
         Err(error) => {
-            eprintln!("failed to subscribe to new block heads: {error:#}");
+            error!("failed to subscribe to new block heads: {error:#}");
             return;
         }
     };
@@ -423,30 +430,36 @@ async fn listen_for_heads(ws_url: Url, head_sender: watch::Sender<u64>) {
         head_sender.send_replace(header.number);
     }
 
-    eprintln!("new block head subscription ended");
+    error!("new block head subscription ended");
 }
 
 #[tokio::main]
 async fn main() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
     let config = match Config::load() {
         Ok(config) => config,
         Err(error) => {
-            eprintln!("failed to load configuration: {error:#}");
+            error!("failed to load configuration: {error:#}");
             std::process::exit(1);
         }
     };
+    info!(
+        "starting backend for chain {} with AquaRouter {} and Sealevel {}",
+        config.chain_id, config.aqua_router_address, config.sealevel_app_address
+    );
 
     let mut backend = match Backend::new(&config) {
         Ok(backend) => backend,
         Err(error) => {
-            eprintln!("failed to create backend: {error:#}");
+            error!("failed to create backend: {error:#}");
             std::process::exit(1);
         }
     };
     let liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
 
     if let Err(error) = tokio::try_join!(backend.run(), run_http_server(liquidity_book_receiver)) {
-        eprintln!("backend stopped: {error:#}");
+        error!("backend stopped: {error:#}");
         std::process::exit(1);
     }
 }
