@@ -701,6 +701,9 @@ function App() {
 
   const parsedPayAmount = payToken ? parseTokenAmount(payAmount, payToken.decimals) : undefined
   const canRequestQuote = Boolean(payToken && receiveToken && parsedPayAmount && parsedPayAmount > 0n)
+  const hasInsufficientBalance = Boolean(
+    parsedPayAmount && payBalance !== undefined && parsedPayAmount > payBalance,
+  )
   const needsTradeApproval = Boolean(quote && parsedPayAmount && tradeAllowance !== undefined && tradeAllowance < parsedPayAmount)
   const quotedFeeBps = quote ? feeBpsFromStrategy(quote.strategy) : undefined
   const liquidityTokens = sepoliaTokens.filter((token) => token.currency === liquidityCurrency)
@@ -772,10 +775,10 @@ function App() {
         return
       }
       setPayBalance((balance) => balance === undefined ? undefined : balance - parsedPayAmount)
-      setPayAmount('')
       setQuote(undefined)
       setTradeAllowance(undefined)
       setSwapSucceeded(true)
+      await requestQuote(true)
     } catch (error) {
       setSwapError(providerErrorMessage(error, 'Swap simulation reverted without a reason.'))
     } finally {
@@ -800,30 +803,32 @@ function App() {
     await swapQuote()
   }
 
-  const tradeButtonLabel = !canRequestQuote
-    ? payToken && receiveToken ? 'Enter amount' : 'Select tokens'
-    : !quote
-      ? maxTradeAmount !== undefined
-        ? 'Trade too large'
-        : isQuoting && !isQuoteUnavailable && !quoteError ? 'Getting quote...' : 'Quote unavailable'
-      : isQuoting
-        ? 'Refreshing quote...'
-        : !address
-          ? 'Connect MetaMask'
-          : !isOnSepolia
-            ? 'Switch to Sepolia'
-            : isLoadingTradeAllowance
-              ? 'Checking approval...'
-              : isApprovingTrade
-                ? `Approving ${payToken?.symbol ?? 'token'}...`
-                : isSwapping
-                  ? 'Swapping...'
-                  : tradeAllowance === undefined
-                    ? 'Approval unavailable'
-                    : needsTradeApproval
-                      ? `Approve ${payToken?.symbol}`
-                      : 'Swap'
-  const isTradeActionDisabled = !quote || isQuoting || isApprovingTrade || isSwapping
+  const tradeButtonLabel = hasInsufficientBalance
+    ? '(Insufficient Balance)'
+    : !canRequestQuote
+      ? payToken && receiveToken ? 'Enter amount' : 'Select tokens'
+      : !quote
+        ? maxTradeAmount !== undefined
+          ? 'Trade too large'
+          : isQuoting && !isQuoteUnavailable && !quoteError ? 'Getting quote...' : 'Quote unavailable'
+        : isQuoting
+          ? 'Refreshing quote...'
+          : !address
+            ? 'Connect MetaMask'
+            : !isOnSepolia
+              ? 'Switch to Sepolia'
+              : isLoadingTradeAllowance
+                ? 'Checking approval...'
+                : isApprovingTrade
+                  ? `Approving ${payToken?.symbol ?? 'token'}...`
+                  : isSwapping
+                    ? 'Swapping...'
+                    : tradeAllowance === undefined
+                      ? 'Approval unavailable'
+                      : needsTradeApproval
+                        ? `Approve ${payToken?.symbol}`
+                        : 'Swap'
+  const isTradeActionDisabled = hasInsufficientBalance || !quote || isQuoting || isApprovingTrade || isSwapping
     || (Boolean(address && isOnSepolia) && (isLoadingTradeAllowance || tradeAllowance === undefined))
 
   const invalidateApprovalReview = () => {
