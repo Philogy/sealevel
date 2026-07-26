@@ -78,6 +78,14 @@ type Quote = {
   amountOut: bigint
 }
 
+type QuoteResponse = {
+  maker?: string
+  strategy?: string
+  amount_out?: string
+  error?: string
+  max_amount_in?: string
+} | null
+
 type MetaMaskProvider = {
   isMetaMask?: boolean
   request: <Result>(args: { method: string; params?: unknown[] }) => Promise<Result>
@@ -242,6 +250,7 @@ function App() {
   const [isQuoting, setIsQuoting] = useState(false)
   const [quoteError, setQuoteError] = useState<string>()
   const [isQuoteUnavailable, setIsQuoteUnavailable] = useState(false)
+  const [maxTradeAmount, setMaxTradeAmount] = useState<bigint>()
   const [tradeAllowance, setTradeAllowance] = useState<bigint>()
   const [isLoadingTradeAllowance, setIsLoadingTradeAllowance] = useState(false)
   const [isApprovingTrade, setIsApprovingTrade] = useState(false)
@@ -579,6 +588,7 @@ function App() {
     setQuote(undefined)
     setQuoteError(undefined)
     setIsQuoteUnavailable(false)
+    setMaxTradeAmount(undefined)
     setTradeAllowance(undefined)
     setSwapError(undefined)
     setSwapSucceeded(false)
@@ -624,7 +634,7 @@ function App() {
         `/api/quotes/${encodeURIComponent(payToken.address)}/${encodeURIComponent(receiveToken.address)}/${inputAmount}`,
       )
       if (!response.ok) throw new Error('Quote request failed.')
-      const payload = await response.json() as { maker?: string; strategy?: string; amount_out?: string } | null
+      const payload = await response.json() as QuoteResponse
       if (requestId !== quoteRequestRef.current) return
 
       if (payload === null) {
@@ -632,6 +642,15 @@ function App() {
         setTradeAllowance(undefined)
         setQuoteError(undefined)
         setIsQuoteUnavailable(true)
+        setMaxTradeAmount(undefined)
+        return
+      }
+      if (payload.error === 'trade_too_large' && typeof payload.max_amount_in === 'string') {
+        setQuote(undefined)
+        setTradeAllowance(undefined)
+        setQuoteError(undefined)
+        setIsQuoteUnavailable(false)
+        setMaxTradeAmount(BigInt(payload.max_amount_in))
         return
       }
       if (typeof payload.maker !== 'string' || typeof payload.strategy !== 'string' || typeof payload.amount_out !== 'string') {
@@ -645,11 +664,13 @@ function App() {
       })
       setQuoteError(undefined)
       setIsQuoteUnavailable(false)
+      setMaxTradeAmount(undefined)
     } catch {
       if (requestId === quoteRequestRef.current) {
         setQuote(undefined)
         setTradeAllowance(undefined)
         setIsQuoteUnavailable(false)
+        setMaxTradeAmount(undefined)
         setQuoteError('Unable to load a quote from SeaLevel.')
       }
     } finally {
@@ -782,7 +803,9 @@ function App() {
   const tradeButtonLabel = !canRequestQuote
     ? payToken && receiveToken ? 'Enter amount' : 'Select tokens'
     : !quote
-      ? isQuoting && !isQuoteUnavailable && !quoteError ? 'Getting quote...' : 'Quote unavailable'
+      ? maxTradeAmount !== undefined
+        ? 'Trade too large'
+        : isQuoting && !isQuoteUnavailable && !quoteError ? 'Getting quote...' : 'Quote unavailable'
       : isQuoting
         ? 'Refreshing quote...'
         : !address
@@ -1183,6 +1206,11 @@ function App() {
               >
                 {tradeButtonLabel}
               </button>
+              {maxTradeAmount !== undefined && payToken && (
+                <p className="quote-message quote-message-error" role="status">
+                  Max Trade Currently Possible: {formatTokenAmount(maxTradeAmount, payToken.decimals)} {payToken.symbol}
+                </p>
+              )}
               {swapError && <p className="quote-message quote-message-error" role="status">{swapError}</p>}
               {swapSucceeded && <p className="quote-message quote-message-success" role="status">Swap complete.</p>}
             </section>

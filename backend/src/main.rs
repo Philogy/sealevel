@@ -38,6 +38,8 @@ sol! {
         external
         view
         returns (uint248 balance, uint8 tokensCount);
+    function balanceOf(address account) external view returns (uint256);
+    function allowance(address owner, address spender) external view returns (uint256);
 
 }
 
@@ -52,6 +54,27 @@ fn token_decimals(token: Address) -> Option<u8> {
     match token {
         USDC | USDT | EURC => Some(6),
         USDS | DAI | EURE => Some(18),
+        _ => None,
+    }
+}
+
+fn max_input_for_output_capacity(
+    output_capacity: U256,
+    input_decimals: u8,
+    output_decimals: u8,
+    fee_bps: u16,
+) -> Option<U256> {
+    let fee_multiplier = U256::from(10_000 - fee_bps);
+    let max_normalized_input = output_capacity
+        .checked_add(U256::from(1))?
+        .checked_mul(U256::from(10_000))?
+        .checked_sub(U256::from(1))?
+        / fee_multiplier;
+
+    match (input_decimals, output_decimals) {
+        (6, 18) => Some(max_normalized_input / U256::from(1_000_000_000_000u64)),
+        (18, 6) => max_normalized_input.checked_mul(U256::from(1_000_000_000_000u64)),
+        (6, 6) | (18, 18) => Some(max_normalized_input),
         _ => None,
     }
 }
@@ -129,6 +152,13 @@ impl LiquidityBook {
             .context("failed to replace liquidity_book.json")?;
         Ok(())
     }
+}
+
+#[derive(Clone)]
+struct HttpState {
+    liquidity_book: watch::Receiver<Arc<LiquidityBook>>,
+    provider: RootProvider,
+    aqua_router_address: Address,
 }
 
 pub struct Backend {
@@ -397,10 +427,10 @@ impl Backend {
 }
 
 async fn get_maker(
-    State(liquidity_book): State<watch::Receiver<Arc<LiquidityBook>>>,
+    State(state): State<HttpState>,
     Path(maker): Path<String>,
 ) -> Json<serde_json::Value> {
-    let liquidity_book = liquidity_book.borrow();
+    let liquidity_book = state.liquidity_book.borrow();
     let maker = maker
         .parse::<Address>()
         .ok()
@@ -414,7 +444,7 @@ async fn get_maker(
 }
 
 async fn get_best_quote(
-    State(liquidity_book): State<watch::Receiver<Arc<LiquidityBook>>>,
+    State(state): State<HttpState>,
     Path((token_in, token_out, amount_in)): Path<(String, String, String)>,
 ) -> Json<serde_json::Value> {
     let (Ok(token_in), Ok(token_out), Ok(amount_in)) = (
@@ -433,26 +463,39 @@ async fn get_best_quote(
         return Json(serde_json::Value::Null);
     };
     let normalized_amount_in = match (input_decimals, output_decimals) {
-        (6, 18) => {
-            let Some(normalized_amount_in) =
-                amount_in.checked_mul(U256::from(1_000_000_000_000u64))
-            else {
-                return Json(serde_json::Value::Null);
-            };
-            normalized_amount_in
-        }
-        (18, 6) => amount_in / U256::from(1_000_000_000_000u64),
-        (6, 6) | (18, 18) => amount_in,
+        (6, 18) => amount_in.checked_mul(U256::from(1_000_000_000_000u64)),
+        (18, 6) => Some(amount_in / U256::from(1_000_000_000_000u64)),
+        (6, 6) | (18, 18) => Some(amount_in),
         _ => return Json(serde_json::Value::Null),
     };
 
-    let liquidity_book = liquidity_book.borrow();
+    let liquidity_book = state.liquidity_book.borrow().clone();
     let mut best_amount_out = None;
     let mut best_trades = Vec::new();
+    let mut max_trade_amount_in = None;
     for (&maker_address, maker) in &liquidity_book.makers {
         let Some(strategies) = maker.tokens.get(&token_out) else {
             continue;
         };
+        let spendable_output = match token_spendable_balance(
+            &state.provider,
+            token_out,
+            maker_address,
+            state.aqua_router_address,
+        )
+        .await
+        {
+            Ok(spendable_output) => spendable_output,
+            Err(error) => {
+                warn!(
+                    "failed to validate output liquidity for maker {maker_address} and token {token_out}: {error:#}"
+                );
+                continue;
+            }
+        };
+        if spendable_output.is_zero() {
+            continue;
+        }
         for (&strategy_hash, &output_balance) in strategies {
             if output_balance.is_zero() {
                 continue;
@@ -474,13 +517,31 @@ async fn get_best_quote(
             {
                 continue;
             }
+
+            let output_capacity = output_balance.min(spendable_output);
+            if let Some(max_amount_in) = max_input_for_output_capacity(
+                output_capacity,
+                input_decimals,
+                output_decimals,
+                fee_bps,
+            )
+            .filter(|max_amount_in| !max_amount_in.is_zero())
+            {
+                max_trade_amount_in = Some(
+                    max_trade_amount_in
+                        .map_or(max_amount_in, |current: U256| current.max(max_amount_in)),
+                );
+            }
+
             let Some(amount_out) = normalized_amount_in
-                .checked_mul(U256::from(10_000 - fee_bps))
+                .and_then(|normalized_amount_in| {
+                    normalized_amount_in.checked_mul(U256::from(10_000 - fee_bps))
+                })
                 .map(|amount_out| amount_out / U256::from(10_000))
             else {
                 continue;
             };
-            if amount_out.is_zero() || amount_out > output_balance {
+            if amount_out.is_zero() || amount_out > output_capacity {
                 continue;
             }
 
@@ -497,24 +558,60 @@ async fn get_best_quote(
         }
     }
 
-    let Some((maker, strategy, amount_out)) = best_trades.choose(&mut rand::rng()) else {
-        return Json(serde_json::Value::Null);
-    };
-    Json(serde_json::json!({
-        "maker": maker,
-        "strategy": strategy,
-        "amount_out": amount_out,
-    }))
+    if let Some((maker, strategy, amount_out)) = best_trades.choose(&mut rand::rng()) {
+        return Json(serde_json::json!({
+            "maker": maker,
+            "strategy": strategy,
+            "amount_out": amount_out,
+        }));
+    }
+    if let Some(max_amount_in) =
+        max_trade_amount_in.filter(|max_amount_in| amount_in > *max_amount_in)
+    {
+        return Json(serde_json::json!({
+            "error": "trade_too_large",
+            "max_amount_in": max_amount_in,
+        }));
+    }
+    Json(serde_json::Value::Null)
 }
 
-async fn run_http_server(liquidity_book: watch::Receiver<Arc<LiquidityBook>>) -> Result<()> {
+async fn token_spendable_balance(
+    provider: &RootProvider,
+    token: Address,
+    owner: Address,
+    spender: Address,
+) -> Result<U256> {
+    let balance_request = TransactionRequest::default()
+        .to(token)
+        .input(TransactionInput::both(
+            balanceOfCall { account: owner }.abi_encode().into(),
+        ));
+    let allowance_request = TransactionRequest::default()
+        .to(token)
+        .input(TransactionInput::both(
+            allowanceCall { owner, spender }.abi_encode().into(),
+        ));
+    let (balance_response, allowance_response) = tokio::try_join!(
+        provider.call(balance_request),
+        provider.call(allowance_request),
+    )
+    .context("failed to read maker token capacity")?;
+    let balance = balanceOfCall::abi_decode_returns(&balance_response)
+        .context("failed to decode maker token balance")?;
+    let allowance = allowanceCall::abi_decode_returns(&allowance_response)
+        .context("failed to decode maker token allowance")?;
+    Ok(balance.min(allowance))
+}
+
+async fn run_http_server(state: HttpState) -> Result<()> {
     let app = Router::new()
         .route("/makers/{maker}", get(get_maker))
         .route(
             "/quotes/{token_in}/{token_out}/{amount_in}",
             get(get_best_quote),
         )
-        .with_state(liquidity_book);
+        .with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
         .context("failed to bind HTTP server")?;
@@ -627,10 +724,12 @@ async fn main() {
         info!("trader started");
     }
 
-    let http_liquidity_book_receiver = backend.liquidity_book_sender.subscribe();
-    if let Err(error) =
-        tokio::try_join!(backend.run(), run_http_server(http_liquidity_book_receiver))
-    {
+    let http_state = HttpState {
+        liquidity_book: backend.liquidity_book_sender.subscribe(),
+        provider: backend.http_provider.clone(),
+        aqua_router_address: config.aqua_router_address,
+    };
+    if let Err(error) = tokio::try_join!(backend.run(), run_http_server(http_state)) {
         error!("backend stopped: {error:#}");
         std::process::exit(1);
     }
